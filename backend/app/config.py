@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     use_fake_llm: bool = False
     testing: bool = False
     local_postgres_url: str = ""
+    local_mongodb_url: str = ""
 
     # Short term memory (conversation turns)
     postgres_url: str = "postgresql+asyncpg://dinemate:dinemate@localhost:5433/dinemate"
@@ -59,6 +60,13 @@ class Settings(BaseSettings):
         if self.testing and self.local_postgres_url:
             return self.local_postgres_url
         return self.postgres_url
+
+    @property
+    def active_mongodb_url(self) -> str:
+        """Tests use the local Mongo, never the shared Atlas cluster."""
+        if self.testing and self.local_mongodb_url:
+            return self.local_mongodb_url
+        return self.mongodb_url
 
     @property
     def is_production(self) -> bool:

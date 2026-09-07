@@ -25,7 +25,8 @@ Specs for the Restaurant Ordering Agent. Read in this order — later documents 
 [0004 Confirmation in code](adr/0004-confirmation-in-code.md) ·
 [0005 Email+password only](adr/0005-email-password-only-v1.md) ·
 [0006 LLM latency / model switch](adr/0006-llm-latency-finding.md) ·
-[0007 Tolerant tool arguments](adr/0007-tolerant-tool-arguments.md)
+[0007 Tolerant tool arguments](adr/0007-tolerant-tool-arguments.md) ·
+[0008 SSE CRLF parsing](adr/0008-sse-crlf-parsing.md)
 
 **Conventions for contributors:** [../CLAUDE.md](../CLAUDE.md)
 

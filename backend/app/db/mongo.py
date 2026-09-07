@@ -27,7 +27,7 @@ def get_client() -> AsyncIOMotorClient:
     client = _clients.get(key)
     if client is None:
         client = AsyncIOMotorClient(
-            settings.mongodb_url,
+            settings.active_mongodb_url,
             serverSelectionTimeoutMS=2000,  # memory is degradable, not blocking
             connectTimeoutMS=2000,
         )

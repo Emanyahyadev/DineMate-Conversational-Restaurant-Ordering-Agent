@@ -377,27 +377,39 @@ export async function streamChat(
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+
+    // Normalise line endings before anything else. The server sends CRLF, and
+    // searching for "\n\n" in "\r\n\r\n" matches nothing: every frame arrives
+    // and none is ever parsed, so the reply silently never appears.
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
 
     // SSE frames are separated by a blank line.
     let split: number;
     while ((split = buffer.indexOf("\n\n")) !== -1) {
-      const frame = buffer.slice(0, split);
+      emitFrame(buffer.slice(0, split), onEvent);
       buffer = buffer.slice(split + 2);
-
-      let name = "message";
-      const dataLines: string[] = [];
-      for (const line of frame.split("\n")) {
-        if (line.startsWith("event:")) name = line.slice(6).trim();
-        else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
-      }
-      if (!dataLines.length) continue;
-
-      try {
-        onEvent({ type: name, ...JSON.parse(dataLines.join("\n")) } as ChatEvent);
-      } catch {
-        /* a frame we cannot parse is skipped, never fatal */
-      }
     }
+  }
+
+  // A trailing frame with no blank line after it still counts.
+  if (buffer.trim()) emitFrame(buffer, onEvent);
+}
+
+function emitFrame(frame: string, onEvent: (event: ChatEvent) => void): void {
+  let name = "message";
+  const dataLines: string[] = [];
+
+  for (const raw of frame.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (line.startsWith(":")) continue; // heartbeat comment
+    if (line.startsWith("event:")) name = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+  }
+  if (!dataLines.length) return;
+
+  try {
+    onEvent({ type: name, ...JSON.parse(dataLines.join("\n")) } as ChatEvent);
+  } catch {
+    /* a frame we cannot parse is skipped, never fatal */
   }
 }

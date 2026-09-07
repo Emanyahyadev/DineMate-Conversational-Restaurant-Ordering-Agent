@@ -14,6 +14,7 @@ from app.config import settings  # noqa: E402
 
 settings.use_fake_llm = True
 settings.testing = True
+settings.local_mongodb_url = settings.local_mongodb_url or "mongodb://localhost:27018"
 settings.local_postgres_url = (
     settings.local_postgres_url
     or "postgresql+asyncpg://dinemate:dinemate@localhost:5433/dinemate"

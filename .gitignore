@@ -12,3 +12,7 @@ frontend/out/
 .env
 .env.local
 .env*.local
+
+# supplied credential files
+atlas-credentials.env
+*credentials*.env
