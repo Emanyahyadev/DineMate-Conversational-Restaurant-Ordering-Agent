@@ -1,57 +1,233 @@
+"""Chat (SSE), conversations and profile routes."""
+
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
 
-from app.agent.restaurant_agent import extract_memory, run_agent
-from app.db import mongo
-from app.db.postgres import SessionLocal, append_message, ensure_conversation, get_history
+from app.agent.orchestrator import load_history, run_turn_stream
+from app.api.deps import current_user_id, get_db, verify_csrf
+from app.db.models import Conversation, Message, User
+from app.services import auth_service, memory_service, order_service
+from app.services.errors import NotFound
 
 router = APIRouter(prefix="/api", tags=["chat"])
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1)
-    user_id: str = "guest"
+    """Note there is no user_id here: identity comes from the session only."""
+
+    message: str = Field(min_length=1, max_length=2000)
     conversation_id: str | None = None
 
-
-class ChatResponse(BaseModel):
-    reply: str
-    conversation_id: str
+    model_config = {"extra": "forbid"}
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(payload: ChatRequest) -> ChatResponse:
-    async with SessionLocal() as session:
-        conversation_id = await ensure_conversation(session, payload.conversation_id, payload.user_id)
-        history = await get_history(session, conversation_id)
-        await session.commit()
+@router.post("/chat", dependencies=[Depends(verify_csrf)])
+async def chat(payload: ChatRequest, user_id: str = Depends(current_user_id)):
+    return EventSourceResponse(
+        run_turn_stream(
+            user_id=user_id,
+            message=payload.message,
+            conversation_id=payload.conversation_id,
+        ),
+        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"},
+        ping=15,
+    )
 
-    memory = await mongo.profile_summary(payload.user_id)
 
-    try:
-        reply = await run_agent(memory, history, payload.message, payload.user_id)
-    except Exception as exc:  # noqa: BLE001 - surface LLM/tool failures to the client
-        raise HTTPException(status_code=502, detail=f"Agent failed: {exc}") from exc
+@router.get("/greeting")
+async def greeting(
+    user_id: str = Depends(current_user_id), session: AsyncSession = Depends(get_db)
+) -> dict:
+    """The opening line, personalised from what DineMate already knows.
 
-    async with SessionLocal() as session:
-        await append_message(session, conversation_id, "user", payload.message)
-        await append_message(session, conversation_id, "assistant", reply)
-        await session.commit()
+    Built server-side because the memory lives there: the client should not have
+    to assemble a customer's own history in order to say hello properly.
+    """
+    user = await session.get(User, user_id)
+    memories = await memory_service.list_memories(user_id)
 
-    extracted = await extract_memory(payload.message, reply)
-    await mongo.remember(payload.user_id, extracted.preferences, extracted.facts)
+    name = None
+    for fact in memories["facts"]:
+        if fact.get("kind") == "name" and fact.get("text"):
+            name = fact["text"].replace("Prefers to be called", "").strip(" .")
+            break
+    if not name and user and user.display_name:
+        name = user.display_name.split()[0]
 
-    return ChatResponse(reply=reply, conversation_id=conversation_id)
+    # Name the allergen, not the sentence it arrived in: stored phrasings vary
+    # ("Allergic to peanuts" / "Nadia is allergic to peanuts.").
+    allergens: list[str] = []
+    for fact in memories["facts"]:
+        if fact.get("kind") != "allergy":
+            continue
+        low = (fact.get("text") or "").lower()
+        # Longest first, and skip a word already covered by a longer one:
+        # otherwise "peanut" also matches "nut" and reads "peanut and nut".
+        for word in sorted(memory_service.ALLERGEN_WORDS, key=len, reverse=True):
+            if word not in low:
+                continue
+            if any(word in seen for seen in allergens):
+                continue
+            allergens.append(word)
+
+    prefs = [p["text"] for p in memories["preferences"]][:2]
+    orders = await order_service.list_orders(session, user_id, limit=1)
+
+    hello = f"Hi {name}" if name else "Hi"
+    knows: list[str] = []
+    if allergens:
+        listed = " and ".join(allergens)
+        knows.append(f"your {listed} allergy is on file, so I will keep those off your suggestions")
+    if prefs:
+        knows.append("I have you down as " + " and ".join(p.lower() for p in prefs))
+
+    if knows:
+        detail = "; ".join(knows)
+        detail = detail[:1].upper() + detail[1:]
+        line = f"{hello}, welcome back. {detail}. What are you in the mood for?"
+    elif orders:
+        where = orders[0].restaurant_name
+        line = (
+            f"{hello}, welcome back."
+            + (f" Your last order was from {where}." if where else "")
+            + " What are you in the mood for?"
+        )
+    else:
+        line = (
+            f"{hello}, I am DineMate. I can show you what our restaurants are cooking, "
+            "take your order, or check on one you have already placed. "
+            "What are you in the mood for?"
+        )
+
+    return {
+        "greeting": line,
+        "name": name,
+        "known_allergens": allergens,
+        "known_preferences": prefs,
+        "returning": bool(orders or allergens or prefs),
+    }
+
+
+@router.post("/conversations", status_code=201)
+async def new_conversation(
+    user_id: str = Depends(current_user_id),
+    session: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_csrf),
+) -> dict:
+    """Start a fresh thread. Memory persists across conversations by design."""
+    conversation = Conversation(user_id=user_id)
+    session.add(conversation)
+    await session.flush()
+    return {"id": conversation.id, "messages": []}
+
+
+@router.get("/conversations")
+async def list_conversations(
+    user_id: str = Depends(current_user_id),
+    session: AsyncSession = Depends(get_db),
+    limit: int = 20,
+) -> dict:
+    rows = await session.execute(
+        select(Conversation)
+        .where(Conversation.user_id == user_id)
+        .order_by(Conversation.updated_at.desc())
+        .limit(min(limit, 50))
+    )
+    conversations = list(rows.scalars())
+    items = []
+    for c in conversations:
+        first = await session.execute(
+            select(Message.content)
+            .where(Message.conversation_id == c.id, Message.role == "user")
+            .order_by(Message.id)
+            .limit(1)
+        )
+        preview = first.scalar_one_or_none()
+        items.append(
+            {
+                "id": c.id,
+                "title": c.title or (preview[:60] if preview else "New conversation"),
+                "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+                "empty": preview is None,
+            }
+        )
+    return {"items": items}
 
 
 @router.get("/conversations/{conversation_id}")
-async def conversation_history(conversation_id: str) -> dict:
-    async with SessionLocal() as session:
-        return {"conversation_id": conversation_id, "messages": await get_history(session, conversation_id, limit=100)}
+async def get_conversation(
+    conversation_id: str,
+    user_id: str = Depends(current_user_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    row = await session.execute(
+        select(Conversation).where(
+            Conversation.id == conversation_id, Conversation.user_id == user_id
+        )
+    )
+    if row.scalar_one_or_none() is None:
+        raise NotFound("We could not find that conversation.")
+    messages = await load_history(session, conversation_id)
+    return {"id": conversation_id, "messages": messages}
 
 
-@router.get("/profile/{user_id}")
-async def profile(user_id: str) -> dict:
-    return await mongo.get_profile(user_id)
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: str,
+    user_id: str = Depends(current_user_id),
+    session: AsyncSession = Depends(get_db),
+    _: None = Depends(verify_csrf),
+) -> None:
+    row = await session.execute(
+        select(Conversation).where(
+            Conversation.id == conversation_id, Conversation.user_id == user_id
+        )
+    )
+    conversation = row.scalar_one_or_none()
+    if conversation is None:
+        raise NotFound("We could not find that conversation.")
+    await session.delete(conversation)
+
+
+# ------------------------------------------------------------------ profile
+@router.get("/profile")
+async def profile(
+    user_id: str = Depends(current_user_id), session: AsyncSession = Depends(get_db)
+) -> dict:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise NotFound()
+    orders = await order_service.list_orders(session, user_id, limit=100)
+    return {
+        "user": auth_service.serialise_user(user),
+        "stats": {
+            "orders_placed": len(orders),
+            "last_order_at": orders[0].confirmed_at.isoformat() if orders else None,
+        },
+    }
+
+
+@router.get("/profile/memories")
+async def memories(user_id: str = Depends(current_user_id)) -> dict:
+    return await memory_service.list_memories(user_id)
+
+
+@router.delete("/profile/memories/{memory_id}", status_code=204)
+async def forget_memory(
+    memory_id: str,
+    user_id: str = Depends(current_user_id),
+    _: None = Depends(verify_csrf),
+) -> None:
+    await memory_service.forget(user_id, memory_id)
+
+
+@router.delete("/profile/memories", status_code=204)
+async def forget_all_memories(
+    user_id: str = Depends(current_user_id), _: None = Depends(verify_csrf)
+) -> None:
+    await memory_service.forget_all(user_id)

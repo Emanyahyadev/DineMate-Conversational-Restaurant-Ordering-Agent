@@ -1,0 +1,108 @@
+# DineMate menu. Single source of truth for dev, tests and evals
+# (TEST_STRATEGY.md section 11). Prices are integer minor units (cents).
+- id: m1
+  name: Margherita Pizza
+  category: Pizza
+  description: Hand-stretched base, San Marzano tomato, fior di latte, fresh basil.
+  base_price: 950
+  dietary_tags: [vegetarian]
+  allergens: [gluten, dairy]
+  allergens_verified: true
+  sort_order: 10
+
+- id: m2
+  name: Pepperoni Pizza
+  category: Pizza
+  description: Double pepperoni, mozzarella, a little chilli honey on the crust.
+  base_price: 1150
+  dietary_tags: []
+  allergens: [gluten, dairy]
+  allergens_verified: true
+  sort_order: 20
+  option_groups:
+    - name: Size
+      min_select: 1
+      max_select: 1
+      options:
+        - { name: Regular, price_delta: 0 }
+        - { name: Large, price_delta: 300 }
+
+- id: m3
+  name: Chicken Alfredo
+  category: Pasta
+  description: Fettuccine, grilled chicken, parmesan cream.
+  base_price: 1200
+  dietary_tags: []
+  allergens: [gluten, dairy, egg]
+  allergens_verified: true
+  sort_order: 30
+
+- id: m4
+  name: Penne Arrabbiata
+  category: Pasta
+  description: Penne in a slow-cooked tomato and chilli sauce. Properly hot.
+  base_price: 1000
+  dietary_tags: [vegan, spicy]
+  allergens: [gluten]
+  allergens_verified: true
+  sort_order: 40
+
+- id: m5
+  name: Caesar Salad
+  category: Salad
+  description: Cos lettuce, anchovy dressing, sourdough croutons, parmesan.
+  base_price: 750
+  dietary_tags: []
+  allergens: [gluten, dairy, egg, fish]
+  allergens_verified: true
+  sort_order: 50
+
+- id: m6
+  name: Garlic Bread
+  category: Sides
+  description: Warm sourdough, garlic butter, parsley.
+  base_price: 400
+  dietary_tags: [vegetarian]
+  allergens: [gluten, dairy]
+  allergens_verified: true
+  sort_order: 60
+
+- id: m7
+  name: Satay Skewers
+  category: Starters
+  description: Grilled chicken skewers with a peanut satay sauce.
+  base_price: 850
+  dietary_tags: []
+  allergens: [peanut, soy]
+  allergens_verified: true
+  sort_order: 70
+
+- id: m8
+  name: Tiramisu
+  category: Dessert
+  description: Mascarpone, espresso-soaked savoiardi, cocoa.
+  base_price: 600
+  dietary_tags: [vegetarian]
+  allergens: [gluten, dairy, egg]
+  allergens_verified: true
+  sort_order: 80
+
+- id: m9
+  name: Fresh Lemonade
+  category: Drinks
+  description: Pressed lemons, cane sugar, mint.
+  base_price: 350
+  dietary_tags: [vegan]
+  allergens: []
+  allergens_verified: true
+  sort_order: 90
+
+- id: m10
+  name: Sparkling Water
+  category: Drinks
+  description: Chilled, 330ml.
+  base_price: 250
+  dietary_tags: [vegan]
+  allergens: []
+  allergens_verified: true
+  sort_order: 100

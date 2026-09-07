@@ -1,51 +1,52 @@
-"""Long term memory: personal preferences and personal data stored in MongoDB."""
+"""MongoDB connection. Holds exactly one thing: per-user memory profiles.
+
+The client is created lazily and cached per event loop. Motor binds a client to
+the loop that created it, so a module-level client breaks anywhere the loop is
+replaced (tests, workers restarted in-process).
+"""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import asyncio
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
 from app.config import settings
 
-client = AsyncIOMotorClient(settings.mongodb_url)
-db = client[settings.mongodb_db]
-profiles = db["profiles"]
+_clients: dict[int, AsyncIOMotorClient] = {}
 
 
-async def get_profile(user_id: str) -> dict[str, Any]:
-    profile = await profiles.find_one({"_id": user_id})
-    return profile or {"_id": user_id, "preferences": [], "facts": []}
+def get_client() -> AsyncIOMotorClient:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    key = id(loop)
+
+    client = _clients.get(key)
+    if client is None:
+        client = AsyncIOMotorClient(
+            settings.mongodb_url,
+            serverSelectionTimeoutMS=2000,  # memory is degradable, not blocking
+            connectTimeoutMS=2000,
+        )
+        _clients[key] = client
+    return client
 
 
-async def profile_summary(user_id: str) -> str:
-    """A compact text block appended to the system prompt."""
-    profile = await get_profile(user_id)
-    preferences = profile.get("preferences", [])
-    facts = profile.get("facts", [])
-    if not preferences and not facts:
-        return "No long term memory for this customer yet."
-    lines = []
-    if preferences:
-        lines.append("Preferences: " + "; ".join(preferences))
-    if facts:
-        lines.append("Personal info: " + "; ".join(facts))
-    return "\n".join(lines)
+class _ProfilesProxy:
+    """Resolves the collection at call time, on the current loop."""
+
+    def _collection(self) -> AsyncIOMotorCollection:
+        return get_client()[settings.mongodb_db]["profiles"]
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._collection(), name)
+
+    @property
+    def database(self) -> Any:
+        return get_client()[settings.mongodb_db]
 
 
-async def remember(user_id: str, preferences: list[str], facts: list[str]) -> None:
-    """Append newly extracted memories, de-duplicated."""
-    if not preferences and not facts:
-        return
-    await profiles.update_one(
-        {"_id": user_id},
-        {
-            "$addToSet": {
-                "preferences": {"$each": preferences},
-                "facts": {"$each": facts},
-            },
-            "$set": {"updated_at": datetime.now(timezone.utc)},
-        },
-        upsert=True,
-    )
+profiles = _ProfilesProxy()

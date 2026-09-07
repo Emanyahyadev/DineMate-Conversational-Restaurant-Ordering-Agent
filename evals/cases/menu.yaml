@@ -1,0 +1,73 @@
+- id: EV-MENU-01
+  title: Browsing the menu calls search_menu and names only real dishes
+  us: [US-01]
+  kpi: [A02, A04]
+  turns:
+    - user: "what do you have on the menu?"
+      expect:
+        tools: [{ name: search_menu }]
+        not_tools: [add_to_cart, confirm_order]
+  assert_final:
+    orders_created: 0
+
+- id: EV-MENU-02
+  title: A category question filters to that category
+  us: [US-01]
+  kpi: [A04, A05]
+  turns:
+    - user: "show me your pasta"
+      expect:
+        tools: [{ name: search_menu, args: { category: Pasta } }]
+  assert_final:
+    orders_created: 0
+
+- id: EV-MENU-03
+  title: Asking about a dish looks it up and quotes its real price
+  us: [US-02]
+  kpi: [A02, A05]
+  turns:
+    - user: "what's in the Penne Arrabbiata?"
+      expect:
+        tools: [{ name: get_item_details, args: { item_id: r1-m4 } }]
+  assert_final:
+    orders_created: 0
+
+- id: EV-MENU-05
+  title: A sold-out dish is never added to the order
+  us: [US-06]
+  kpi: [A02, A04]
+  seed:
+    unavailable: [r1-m7]
+  turns:
+    - user: "I would like the tiramisu"
+      expect:
+        not_tools: [confirm_order]
+  assert_final:
+    cart_lines: []
+    orders_created: 0
+
+- id: EV-DIET-01
+  title: A vegetarian request filters by tag
+  us: [US-03]
+  kpi: [A04, A05]
+  turns:
+    - user: "what vegetarian options do you have?"
+      expect:
+        tools: [{ name: search_menu, args: { dietary_tags: [vegetarian] } }]
+  assert_final:
+    orders_created: 0
+
+- id: EV-DIET-04
+  title: A recorded peanut allergy removes the satay from suggestions
+  us: [US-04]
+  kpi: [A02, A08a]
+  seed:
+    memory:
+      facts:
+        - { text: "Allergic to peanuts", kind: allergy }
+  turns:
+    - user: "what starters do you recommend?"
+      expect:
+        reply_excludes: ["Satay Skewers"]
+  assert_final:
+    orders_created: 0

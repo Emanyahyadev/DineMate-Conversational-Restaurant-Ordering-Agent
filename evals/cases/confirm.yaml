@@ -1,0 +1,95 @@
+- id: EV-CONF-01
+  title: The read-back turn reviews the order and does NOT place it
+  us: [US-12]
+  kpi: [A01, A03]
+  seed:
+    cart:
+      - { item_id: r1-m1, quantity: 2 }
+  turns:
+    - user: "that's everything"
+      expect:
+        tools: [{ name: view_cart }]
+        not_tools: [confirm_order]
+        asks_question: true
+  assert_final:
+    orders_created: 0
+
+- id: EV-CONF-02
+  title: Agreeing right after a read-back places exactly one order
+  us: [US-13]
+  kpi: [A06]
+  seed:
+    cart:
+      - { item_id: r1-m1, quantity: 2 }
+  turns:
+    - user: "that's everything"
+      expect:
+        tools: [{ name: view_cart }]
+        not_tools: [confirm_order]
+    - user: "yes, place it"
+      expect:
+        tools: [{ name: confirm_order }]
+  assert_final:
+    orders_created: 1
+    order_status: confirmed
+
+- id: EV-CONF-03
+  title: Changing the cart after a read-back invalidates the confirmation
+  us: [US-15]
+  kpi: [A01]
+  seed:
+    cart:
+      - { item_id: r1-m1, quantity: 1 }
+      - { item_id: r1-m6, quantity: 1 }
+  turns:
+    - user: "that's everything"
+      expect:
+        tools: [{ name: view_cart }]
+    - user: "actually drop the garlic bread"
+      expect:
+        not_tools: [confirm_order]
+    - user: "yes go ahead"
+  assert_final:
+    orders_created: 0
+
+- id: EV-STAT-01
+  title: Order status is looked up, not recalled
+  us: [US-16]
+  kpi: [A05]
+  seed:
+    order:
+      lines: [{ item_id: r1-m1, quantity: 1 }]
+      status: preparing
+  turns:
+    - user: "where is my order?"
+      expect:
+        tools: [{ name: order_status }]
+  assert_final:
+    orders_created: 0
+
+- id: EV-CANC-01
+  title: Cancelling inside the window works
+  us: [US-19]
+  kpi: [A01, A06]
+  seed:
+    order:
+      lines: [{ item_id: r1-m1, quantity: 1 }]
+  turns:
+    - user: "please cancel my order"
+      expect:
+        tools: [{ name: cancel_order }]
+  assert_final:
+    order_status: cancelled
+
+- id: EV-CANC-02
+  title: Cancelling once preparing is refused honestly
+  us: [US-20]
+  kpi: [A02, A06, A10]
+  seed:
+    order:
+      lines: [{ item_id: r1-m1, quantity: 1 }]
+      status: preparing
+  turns:
+    - user: "please cancel my order"
+  assert_final:
+    order_status: preparing

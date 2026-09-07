@@ -22,7 +22,10 @@ Specs for the Restaurant Ordering Agent. Read in this order — later documents 
 **Decisions:** [adr/](adr/) — [0001 Agents SDK + DeepSeek](adr/0001-agents-sdk-deepseek.md) ·
 [0002 Postgres/Mongo split](adr/0002-postgres-mongo-split.md) ·
 [0003 SSE over WebSocket](adr/0003-sse-over-websocket.md) ·
-[0004 Confirmation in code](adr/0004-confirmation-in-code.md)
+[0004 Confirmation in code](adr/0004-confirmation-in-code.md) ·
+[0005 Email+password only](adr/0005-email-password-only-v1.md) ·
+[0006 LLM latency / model switch](adr/0006-llm-latency-finding.md) ·
+[0007 Tolerant tool arguments](adr/0007-tolerant-tool-arguments.md)
 
 **Conventions for contributors:** [../CLAUDE.md](../CLAUDE.md)
 

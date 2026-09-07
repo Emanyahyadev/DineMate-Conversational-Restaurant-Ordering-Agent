@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dinemate-postgres
+    environment:
+      POSTGRES_USER: dinemate
+      POSTGRES_PASSWORD: dinemate
+      POSTGRES_DB: dinemate
+    ports: ["5433:5432"]
+    volumes: ["dinemate_pg:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dinemate"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mongo:
+    image: mongo:7
+    container_name: dinemate-mongo
+    ports: ["27018:27017"]
+    volumes: ["dinemate_mongo:/data/db"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  dinemate_pg:
+  dinemate_mongo:

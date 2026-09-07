@@ -1,0 +1,38 @@
+- id: EV-REST-01
+  title: A cuisine question lists real restaurants, never invented ones
+  us: [US-01]
+  kpi: [A02, A04]
+  turns:
+    - user: "which restaurants do you have?"
+      expect:
+        reply_excludes: ["McDonald", "Domino", "Pizza Hut"]
+  assert_final:
+    orders_created: 0
+
+- id: EV-REST-02
+  title: One order cannot mix two kitchens (Rule K1)
+  us: [US-07]
+  kpi: [A05, A10]
+  seed:
+    cart:
+      - { item_id: r1-m1, quantity: 1 }
+  turns:
+    - user: "also add a classic cheeseburger"
+  assert_final:
+    cart_lines: [{ item_id: r1-m1, quantity: 1 }]
+    orders_created: 0
+
+- id: EV-REST-03
+  title: A peanut allergy is honoured across every restaurant
+  us: [US-04]
+  kpi: [A02, A08a]
+  seed:
+    memory:
+      facts:
+        - { text: "Allergic to peanuts", kind: allergy }
+  turns:
+    - user: "what starters do you recommend?"
+      expect:
+        reply_excludes: ["Summer Rolls", "Green Papaya Salad", "Satay"]
+  assert_final:
+    orders_created: 0

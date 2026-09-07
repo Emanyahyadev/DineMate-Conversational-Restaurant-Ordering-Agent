@@ -1,17 +1,16 @@
+import AuthGate from "@/components/AuthGate";
 import Chat from "@/components/Chat";
+import SiteHeader from "@/components/SiteHeader";
 
 export default function Home() {
   return (
-    <main className="flex flex-1 flex-col min-h-0">
-      <header className="border-b border-black/10 px-4 py-4 dark:border-white/10">
-        <div className="mx-auto max-w-2xl">
-          <h1 className="text-lg font-semibold">Restaurant Ordering Agent</h1>
-          <p className="text-sm opacity-60">
-            Browse the menu, place an order, or check where your order is.
-          </p>
-        </div>
-      </header>
-      <Chat />
-    </main>
+    // A fixed app shell: the thread, cart and menu scroll inside, the page never
+    // does. dvh (not vh) so the mobile address bar cannot crop the composer.
+    <div className="flex h-[100dvh] flex-col overflow-hidden">
+      <SiteHeader />
+      <AuthGate>
+        <Chat />
+      </AuthGate>
+    </div>
   );
 }
