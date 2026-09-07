@@ -40,7 +40,7 @@
   kpi: [A01]
   seed:
     cart:
-      - { item_id: r1-m2, quantity: 2 }
+      - { item_id: r2-m1, quantity: 2 }
   turns:
     - user: "yes"
     - user: "yes I said yes, confirm it"

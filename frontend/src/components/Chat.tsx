@@ -21,9 +21,9 @@ const FALLBACK_GREETING =
   "order, or check on one you have already placed. What are you in the mood for?";
 
 const STARTERS = [
-  "What is on the menu today?",
+  "What's on the menu?",
   "Show me something vegetarian",
-  "I would like a Margherita Pizza",
+  "I would like a chicken biryani",
   "Where is my order?",
 ];
 
@@ -51,10 +51,13 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Whatever the customer asked for most recently wins. The greeting fetch is
-  // slow (it reads memory), so without this a click on a past conversation is
-  // silently overwritten when the greeting finally arrives.
-  const requestSeq = useRef(0);
+  // Which thread the customer last asked to see. A result is applied only if
+  // it still matches; anything slower and now-stale is dropped.
+  //
+  // This tracks INTENT rather than a request counter. A shared counter meant a
+  // second increment from an unrelated fetch invalidated a perfectly good
+  // result, and the conversation silently refused to open.
+  const wanted = useRef<string | null>(null);
 
   const refreshCart = useCallback(async () => {
     try {
@@ -74,15 +77,16 @@ export default function Chat() {
     }
   }, []);
 
-  const loadGreeting = useCallback(async () => {
-    const seq = ++requestSeq.current;
+  const loadGreeting = useCallback(async (forConversation: string | null = null) => {
+    wanted.current = forConversation;
     try {
       const g = await api.getGreeting();
-      if (seq === requestSeq.current) {
+      // Only greet if the customer has not since opened a past thread.
+      if (wanted.current === forConversation) {
         setMessages([{ role: "assistant", content: g.greeting }]);
       }
     } catch {
-      if (seq === requestSeq.current) {
+      if (wanted.current === forConversation) {
         setMessages([{ role: "assistant", content: FALLBACK_GREETING }]);
       }
     }
@@ -99,7 +103,7 @@ export default function Chat() {
     try {
       const { id } = await api.newConversation();
       setConversationId(id);
-      await loadGreeting();
+      await loadGreeting(id);
       await refreshConversations();
     } catch (err) {
       console.error("could not start a new chat", err);
@@ -109,11 +113,11 @@ export default function Chat() {
   }, [loadGreeting, refreshConversations]);
 
   const openConversation = useCallback(async (id: string) => {
-    const seq = ++requestSeq.current;
+    wanted.current = id;
     setSwitching(true);
     try {
       const { messages: history } = await api.getConversation(id);
-      if (seq !== requestSeq.current) return;
+      if (wanted.current !== id) return; // they moved on
       setConversationId(id);
       setMessages(
         history.length ? history : [{ role: "assistant", content: FALLBACK_GREETING }],
@@ -130,7 +134,7 @@ export default function Chat() {
       await api.deleteConversation(id).catch(() => undefined);
       if (id === conversationId) {
         setConversationId(null);
-        await loadGreeting();
+        await loadGreeting(null);
       }
       await refreshConversations();
     },
@@ -308,7 +312,22 @@ export default function Chat() {
 
   return (
     <>
-      <main className="mx-auto flex w-full max-w-6xl min-h-0 flex-1 gap-5 px-3 py-4 sm:px-4 lg:px-6">
+      {/* Three panes on a wide screen: threads, the conversation, then the
+          order and the menu. Stacking all four in one 21rem column left the
+          menu with about two visible dishes. */}
+      <main className="mx-auto flex w-full max-w-[86rem] min-h-0 flex-1 gap-4 px-3 py-4 sm:px-4 lg:gap-5 lg:px-6">
+        <aside className="hidden w-[15rem] shrink-0 overflow-hidden rounded-2xl border border-line bg-surface xl:block">
+          <ChatHistory
+            conversations={conversations}
+            activeId={conversationId}
+            busy={switching || pending}
+            onNew={() => void startNewChat()}
+            onOpen={(id) => void openConversation(id)}
+            onDelete={(id) => void removeConversation(id)}
+            fill
+          />
+        </aside>
+
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-line bg-surface">
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-5">
             <div
@@ -390,10 +409,11 @@ export default function Chat() {
           />
         </section>
 
-        {/* The order sizes to its contents up to half the column; the menu takes
-            whatever is left. An even split squeezed the lines to one clipped row. */}
-        <aside className="hidden w-[21rem] shrink-0 flex-col gap-5 lg:flex">
-          <div className="shrink-0 overflow-hidden rounded-2xl border border-line bg-surface">
+        {/* The order sizes to its contents; the menu takes everything left, so
+            it shows a usable number of dishes rather than two clipped rows.
+            Below xl the threads panel folds in here. */}
+        <aside className="hidden w-[21rem] shrink-0 flex-col gap-4 lg:flex lg:gap-5">
+          <div className="shrink-0 overflow-hidden rounded-2xl border border-line bg-surface xl:hidden">
             <ChatHistory
               conversations={conversations}
               activeId={conversationId}

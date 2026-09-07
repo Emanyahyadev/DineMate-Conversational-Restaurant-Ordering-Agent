@@ -17,6 +17,8 @@ export type User = {
   display_name: string | null;
   email_verified: boolean;
   created_at: string | null;
+  role: "customer" | "staff";
+  staff_restaurant_id: string | null;
 };
 
 export type MenuItem = {
@@ -94,6 +96,7 @@ export type Order = {
   tax_display: string;
   total_display: string;
   total_cents: number;
+  notes: string;
   confirmed_at: string;
   cancellable_until: string;
   eta_minutes: number;
@@ -251,6 +254,58 @@ export type ConversationSummary = {
   updated_at: string | null;
   empty: boolean;
 };
+
+/* --------------------------------------------------------------- kitchen */
+
+export type KitchenOrder = Order & {
+  waiting_minutes: number;
+  is_late: boolean;
+  next_statuses: string[];
+};
+
+export type KitchenStats = {
+  orders_today: number;
+  cancelled_today: number;
+  revenue_today_cents: number;
+  revenue_today_display: string;
+  live_by_status: Record<string, number>;
+  top_items: { name: string; quantity: number }[];
+};
+
+export type KitchenMenuItem = {
+  id: string;
+  name: string;
+  category: string;
+  is_available: boolean;
+  price_display: string;
+};
+
+export const kitchenMe = () =>
+  request<{
+    staff: { id: string; email: string; name: string | null };
+    restaurant: { id: string; name: string; cuisine: string };
+  }>("/api/kitchen/me");
+
+export const kitchenOrders = () =>
+  request<{ items: KitchenOrder[]; stats: KitchenStats }>("/api/kitchen/orders");
+
+export const kitchenHistory = () =>
+  request<{ items: Order[] }>("/api/kitchen/orders/history");
+
+export const advanceOrder = (id: string, to_status: string) =>
+  request<{ order: Order }>(`/api/kitchen/orders/${id}/advance`, {
+    method: "POST",
+    body: JSON.stringify({ to_status, reason: "" }),
+  });
+
+export const kitchenMenu = () =>
+  request<{ items: KitchenMenuItem[] }>("/api/kitchen/menu");
+
+export const setItemAvailability = (id: string, is_available: boolean) =>
+  request<{ item: KitchenMenuItem }>(`/api/kitchen/menu/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_available }),
+  });
 
 export const getGreeting = () => request<Greeting>("/api/greeting");
 

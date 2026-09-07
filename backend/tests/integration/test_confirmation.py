@@ -28,7 +28,7 @@ async def test_cart_change_invalidates_token(client):
     """US-15: any mutation forces a fresh read-back."""
     c = await register_and_login(client, "stale@dinemate.example")
     token = await _cart_with_token(c)
-    await c.post("/api/cart/lines", json={"item_id": "r1-m6", "quantity": 1})
+    await c.post("/api/cart/lines", json={"item_id": "r1-m5", "quantity": 1})
     r = await c.post("/api/orders", json={"confirmation_token": token},
                      headers={"Idempotency-Key": "k3"})
     assert r.status_code == 409

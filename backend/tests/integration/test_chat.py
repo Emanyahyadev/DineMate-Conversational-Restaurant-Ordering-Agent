@@ -1,6 +1,7 @@
 """Agent turns over SSE, with the deterministic fake model."""
 import json
 
+from app.config import settings
 from tests.conftest import register_and_login
 
 
@@ -41,7 +42,7 @@ async def test_menu_question_calls_search(client):
 async def test_add_item_then_readback_then_confirm(client):
     c = await register_and_login(client, "chat2@dinemate.example")
 
-    e1 = await stream(c, "I would like two margherita pizzas")
+    e1 = await stream(c, "I would like two chicken chargas")
     conv = [d for n, d in e1 if n == "start"][0]["conversation_id"]
     assert "add_to_cart" in tools_called(e1)
 
@@ -49,7 +50,8 @@ async def test_add_item_then_readback_then_confirm(client):
     assert "view_cart" in tools_called(e2)
     # BC-2: the read-back turn must NOT place the order
     assert "confirm_order" not in tools_called(e2)
-    assert "$" in reply_text(e2)
+    # The read-back must state a price, in whatever currency is configured.
+    assert settings.currency_symbol.strip() in reply_text(e2)
 
     e3 = await stream(c, "yes, place it", conv)
     assert "confirm_order" in tools_called(e3)
@@ -65,7 +67,7 @@ async def test_add_item_then_readback_then_confirm(client):
 async def test_confirm_without_readback_is_refused(client):
     """KPI A01 hard gate: consent cannot be skipped."""
     c = await register_and_login(client, "chat3@dinemate.example")
-    e1 = await stream(c, "add a margherita")
+    e1 = await stream(c, "add a charga")
     conv = [d for n, d in e1 if n == "start"][0]["conversation_id"]
 
     # Straight to 'yes' with no read-back in between.

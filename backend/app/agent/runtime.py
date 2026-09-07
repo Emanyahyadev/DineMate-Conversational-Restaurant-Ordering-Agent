@@ -18,7 +18,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 set_tracing_disabled(True)  # SDK tracing uploads to OpenAI; we run on DeepSeek
 
-PROMPT_VERSION = "v1.0.0"
+PROMPT_VERSION = "v1.1.0"
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "system_v1_0_0.md"
 
 

@@ -45,10 +45,14 @@ export default function CartPanel({
         </p>
       </div>
 
-      <div className="max-h-[34vh] min-h-0 overflow-y-auto px-4 py-3">
+      <div
+        className={`min-h-0 overflow-y-auto px-4 ${
+          lines.length === 0 ? "py-2" : "max-h-[30vh] py-3"
+        }`}
+      >
         {lines.length === 0 ? (
-          <p className="py-6 text-center text-[13.5px] leading-relaxed text-ink-muted">
-            Nothing yet. Ask DineMate what is good, or pick a dish from a restaurant.
+          <p className="pb-2 text-[13px] leading-snug text-ink-muted">
+            Nothing yet. Ask DineMate what is good, or tap a dish.
           </p>
         ) : (
           <ul className="flex flex-col gap-3">

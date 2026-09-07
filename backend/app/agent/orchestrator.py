@@ -220,6 +220,24 @@ async def run_turn_stream(
             )
             return
 
+    # Memory is written BEFORE the terminal event. Anything placed after the
+    # final yield of an async generator runs only if the consumer keeps
+    # iterating past it - a client that stops at `done`, or a browser that
+    # navigates away, silently discarded it.
+    reply_text = "".join(reply_parts)
+    rules = memory_extract.extract(message)
+    memories_written = 0
+    if rules["preferences"] or rules["facts"]:
+        try:
+            memories_written = await memory_service.remember(
+                user_id, rules["preferences"], rules["facts"]
+            )
+        except Exception as exc:  # noqa: BLE001 - memory never breaks a chat
+            logger.info("rule-based memory write skipped: %s", exc)
+
+    # The model pass is richer but costs another call, so it stays detached.
+    _schedule_memory_extraction(user_id, message, reply_text)
+
     duration_ms = (time.perf_counter() - started) * 1000
     yield _sse(
         "done",
@@ -229,29 +247,18 @@ async def run_turn_stream(
             "duration_ms": round(duration_ms, 1),
             "ttft_ms": round(ttft_ms or duration_ms, 1),
             "tool_calls": [t["name"] for t in ctx.tool_calls],
+            "memories_written": memories_written,
             "degraded": {"memory": degraded_memory},
         },
     )
 
-    # Two-stage memory. The rule pass is synchronous and always completes, so a
-    # stated allergy is on file before the customer's next message. The model
-    # pass is richer but is a second LLM call, so it runs detached and may not
-    # land for a while on a slow provider.
-    rules = memory_extract.extract(message)
-    if rules["preferences"] or rules["facts"]:
-        try:
-            await memory_service.remember(user_id, rules["preferences"], rules["facts"])
-        except Exception as exc:  # noqa: BLE001 - memory never breaks a chat
-            logger.info("rule-based memory write skipped: %s", exc)
 
-    _schedule_memory_extraction(user_id, message, "".join(reply_parts))
-
-
+# --------------------------------------------------------------- memory pass
 _BACKGROUND: set[asyncio.Task] = set()
 
 
 def _schedule_memory_extraction(user_id: str, message: str, reply: str) -> None:
-    """Fire and forget, but keep a strong reference so the task is not GC'd."""
+    """Fire and forget, holding a strong reference so the task is not GC'd."""
     try:
         task = asyncio.create_task(_extract_memory_safely(user_id, message, reply))
     except RuntimeError:  # no running loop (shutdown)
@@ -261,10 +268,11 @@ def _schedule_memory_extraction(user_id: str, message: str, reply: str) -> None:
 
 
 async def _extract_memory_safely(user_id: str, user_message: str, reply: str) -> None:
-    """Memory extraction must never break a chat."""
+    """The richer, model-based pass. Its failure must never surface: the rule
+    pass has already stored whatever was stated outright."""
     try:
         turn = f"Customer: {user_message}\nAssistant: {reply}"
-        result = await Runner.run(memory_extractor(), turn)
+        result = await Runner.run(memory_extractor(), turn, max_turns=2)
         raw = result.final_output
         if isinstance(raw, str):
             raw = raw.strip()
@@ -282,11 +290,11 @@ async def _extract_memory_safely(user_id: str, user_message: str, reply: str) ->
     except (RuntimeError, asyncio.CancelledError):
         return  # loop torn down before extraction ran
     except Exception as exc:  # noqa: BLE001
-        logger.info("memory extraction skipped: %s", exc)
+        logger.info("model memory extraction skipped: %s", exc)
 
 
 async def confirmation_token_for(user_id: str) -> str | None:
-    """The browser's 'Place order' button needs a token of its own (FRONTEND_SPEC 4)."""
+    """The browser's Place order button needs a token of its own (FRONTEND_SPEC 4)."""
     async with SessionLocal() as session:
         token = await cart_service.issue_confirmation_token(session, user_id)
         await session.commit()

@@ -1,15 +1,24 @@
 """Money is integer minor units, rounded half-up once (Rules $1-$6)."""
 import pytest
 
+from app.config import settings
 from app.services import money
 
 
-def test_display():
+def test_display_uses_the_configured_currency():
+    """PKR: the minor unit is the rupee, so nothing follows a decimal point."""
+    assert money.display(450) == "Rs 450"
+    assert money.display(0) == "Rs 0"
+    assert money.display(1250) == "Rs 1,250"
+    assert money.display(-250) == "-Rs 250"
+
+
+def test_display_handles_a_two_decimal_currency(monkeypatch):
+    monkeypatch.setattr(settings, "currency_symbol", "$")
+    monkeypatch.setattr(settings, "currency_decimals", 2)
     assert money.display(950) == "$9.50"
-    assert money.display(0) == "$0.00"
     assert money.display(5) == "$0.05"
-    assert money.display(100000) == "$1000.00"
-    assert money.display(-250) == "-$2.50"
+    assert money.display(100000) == "$1,000.00"
 
 
 def test_line_total_is_exact():
@@ -40,7 +49,7 @@ def test_order_total_is_consistent():
 
 def test_money_fields_carry_both_forms():
     f = money.money_fields("total", 2430)
-    assert f == {"total_cents": 2430, "total_display": "$24.30"}
+    assert f == {"total_cents": 2430, "total_display": money.display(2430)}
 
 
 def test_negative_quantity_rejected():

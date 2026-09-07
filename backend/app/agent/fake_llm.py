@@ -149,6 +149,14 @@ class _Responder:
         if called:
             last_tool = called[-1]
 
+            if last_tool == "get_full_menu" and isinstance(latest, dict):
+                kitchens = latest.get("kitchens", [])
+                names = "; ".join(k["restaurant"] for k in kitchens)
+                return say(
+                    f"We have {latest.get('total_items', 0)} dishes across {names}. "
+                    "Which kitchen would you like to look at?"
+                )
+
             if last_tool == "search_menu":
                 items = latest if isinstance(latest, list) else []
                 if not items:
@@ -254,8 +262,17 @@ class _Responder:
                 return call_tool("search_menu", {"query": text[:60]})
             return call_tool("add_to_cart", {"item_id": item, "quantity": _quantity(text)})
 
+        # Asking for "the menu" wants all of it. This has to be tested before the
+        # generic browse branch below, which would answer with a sample instead.
+        if re.search(
+            r"(what'?s on the menu|whats on the menu|full menu|entire menu|"
+            r"see the menu|show me the menu|the whole menu)",
+            text,
+        ):
+            return call_tool("get_full_menu", {})
+
         if re.search(r"\b(menu|what do you have|what'?s good|recommend|hungry|options|"
-                     r"vegetarian|vegan|spicy|gluten|dessert|drink|pizza|pasta|salad)\b", text):
+                     r"vegetarian|vegan|spicy|gluten|dessert|drink|biryani|karahi|naan)\b", text):
             args: dict[str, Any] = {"query": text[:60]}
             tags = [
                 tag
@@ -264,9 +281,29 @@ class _Responder:
             ]
             if tags:
                 args["dietary_tags"] = tags
-            for cat in ("Pizza", "Pasta", "Salad", "Dessert", "Drinks", "Sides", "Starters"):
-                if cat.lower().rstrip("s") in text:
+            # Word the customer is likely to use -> the menu's own category.
+            for word, cat in (
+                ("biryani", "Biryani & Rice"),
+                ("pulao", "Biryani & Rice"),
+                ("rice", "Biryani & Rice"),
+                ("karahi", "Karahi & Curries"),
+                ("curry", "Karahi & Curries"),
+                ("bbq", "BBQ"),
+                ("kabab", "BBQ"),
+                ("tikka", "BBQ"),
+                ("naan", "Breads"),
+                ("bread", "Breads"),
+                ("paratha", "Breads"),
+                ("dessert", "Desserts"),
+                ("sweet", "Desserts"),
+                ("drink", "Drinks"),
+                ("chai", "Drinks"),
+                ("starter", "Starters"),
+                ("side", "Sides"),
+            ):
+                if word in text:
                     args["category"] = cat
+                    break
             return call_tool("search_menu", args)
 
         return say(
@@ -276,26 +313,28 @@ class _Responder:
 
 
 _ITEM_HINTS = {
-    # Nonna Vera (Italian)
-    "margherita": "r1-m1", "pepperoni": "r1-m2", "alfredo": "r1-m3",
-    "arrabbiata": "r1-m4", "caesar": "r1-m5", "garlic bread": "r1-m6",
-    "tiramisu": "r1-m7", "lemonade": "r1-m8",
-    # Chilli Bazaar (North Indian)
-    "bhaji": "r2-m1", "tikka": "r2-m2", "butter chicken": "r2-m3",
-    "rogan": "r2-m4", "chana": "r2-m5", "naan": "r2-m6",
-    "kachumber": "r2-m7", "kulfi": "r2-m8", "lassi": "r2-m9",
-    # Hanoi Tram (Vietnamese)
-    "summer roll": "r3-m1", "tofu": "r3-m2", "beef pho": "r3-m3",
-    "mushroom pho": "r3-m4", "banh mi": "r3-m5", "papaya": "r3-m6",
-    "pandan": "r3-m7", "iced coffee": "r3-m8",
-    # Ember & Bun (Burgers)
-    "cheeseburger": "r4-m1", "chicken burger": "r4-m2", "halloumi": "r4-m3",
-    "beyond": "r4-m4", "rosemary fries": "r4-m5", "chilli fries": "r4-m6",
-    "slaw": "r4-m7", "shake": "r4-m8",
-    # Green Room (plant-based)
-    "aubergine": "r5-m1", "fritter": "r5-m2", "cauliflower": "r5-m3",
-    "orzo": "r5-m4", "heritage tomato": "r5-m5", "sourdough": "r5-m6",
-    "chocolate mousse": "r5-m7", "green juice": "r5-m8",
+    # Lahori Charga House
+    "charga": "r1-m1", "chicken karahi": "r1-m2", "mutton karahi": "r1-m3",
+    "daal": "r1-m4", "dal makhani": "r1-m4", "garlic naan": "r1-m5",
+    "roghni": "r1-m6", "kachumber": "r1-m7", "raita": "r1-m8",
+    "lime soda": "r1-m9",
+    # Karachi Seekh & Broast
+    "chicken seekh": "r2-m1", "beef seekh": "r2-m2", "seekh": "r2-m2",
+    "malai boti": "r2-m3", "broast": "r2-m4", "bun kabab": "r2-m5",
+    "loaded fries": "r2-m6", "paratha": "r2-m7", "mint chutney": "r2-m8",
+    "water": "r2-m9",
+    # Sindhi Biryani Co
+    "chicken biryani": "r3-m1", "sindhi biryani": "r3-m1", "beef biryani": "r3-m2",
+    "pulao": "r3-m3", "vegetable biryani": "r3-m4", "veg biryani": "r3-m4",
+    "zarda": "r3-m5", "shami": "r3-m6", "salan": "r3-m8", "biryani": "r3-m1",
+    # Peshawari Namak Mandi
+    "namkeen": "r4-m1", "chapli": "r4-m2", "kabuli": "r4-m3",
+    "lamb tikka": "r4-m4", "peshawari naan": "r4-m5", "tarkari": "r4-m6",
+    "qehwa": "r4-m7", "green tea": "r4-m7", "sheer khurma": "r4-m8",
+    # Chai Khana
+    "doodh patti": "r5-m1", "kashmiri chai": "r5-m2", "halwa puri": "r5-m3",
+    "aloo anda": "r5-m4", "nihari": "r5-m5", "gulab jamun": "r5-m6",
+    "gajar": "r5-m7", "lassi": "r5-m8", "chai": "r5-m1",
 }
 
 

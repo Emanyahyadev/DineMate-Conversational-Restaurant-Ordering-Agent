@@ -96,6 +96,8 @@ def serialise_user(user: User) -> dict[str, Any]:
         "display_name": user.display_name,
         "email_verified": user.email_verified_at is not None,
         "created_at": user.created_at.isoformat() if user.created_at else None,
+        "role": user.role,
+        "staff_restaurant_id": user.staff_restaurant_id,
     }
 
 

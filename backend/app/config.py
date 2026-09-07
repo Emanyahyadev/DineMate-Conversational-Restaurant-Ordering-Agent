@@ -43,7 +43,11 @@ class Settings(BaseSettings):
     cookie_domain: str = ""
 
     # Domain rules (DOMAIN_MODEL.md)
-    tax_rate: float = 0.08
+    # Currency. PKR has no practical subunit, so minor_units == rupees and
+    # nothing is shown after a decimal point. Arithmetic stays integer either way.
+    currency_symbol: str = "Rs "
+    currency_decimals: int = 0
+    tax_rate: float = 0.16
     cancellation_window_minutes: int = 10
     confirmation_token_ttl_seconds: int = 300
     history_turns: int = 12

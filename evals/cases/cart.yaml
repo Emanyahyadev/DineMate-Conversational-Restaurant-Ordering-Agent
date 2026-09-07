@@ -3,7 +3,7 @@
   us: [US-07]
   kpi: [A05]
   turns:
-    - user: "I would like a Margherita Pizza"
+    - user: "I would like a Chicken Charga"
       expect:
         tools: [{ name: add_to_cart, args: { item_id: r1-m1, quantity: 1 } }]
         not_tools: [confirm_order]
@@ -16,7 +16,7 @@
   us: [US-08]
   kpi: [A05]
   turns:
-    - user: "I would like two margherita pizzas"
+    - user: "I would like two chicken chargas"
       expect:
         tools: [{ name: add_to_cart, args: { item_id: r1-m1, quantity: 2 } }]
   assert_final:
@@ -28,11 +28,11 @@
   us: [US-08]
   kpi: [A05]
   turns:
-    - user: "can i get 3 garlic bread"
+    - user: "can i get 3 garlic naan"
       expect:
-        tools: [{ name: add_to_cart, args: { item_id: r1-m6, quantity: 3 } }]
+        tools: [{ name: add_to_cart, args: { item_id: r1-m5, quantity: 3 } }]
   assert_final:
-    cart_lines: [{ item_id: r1-m6, quantity: 3 }]
+    cart_lines: [{ item_id: r1-m5, quantity: 3 }]
     orders_created: 0
 
 - id: EV-CART-04
@@ -57,9 +57,9 @@
   seed:
     cart:
       - { item_id: r1-m1, quantity: 1 }
-      - { item_id: r1-m5, quantity: 1 }
+      - { item_id: r1-m7, quantity: 1 }
   turns:
-    - user: "drop the caesar salad please"
+    - user: "drop the kachumber salad please"
       expect:
         not_tools: [confirm_order]
   assert_final:
@@ -71,7 +71,7 @@
   us: [US-08]
   kpi: [A05]
   turns:
-    - user: "I would like 50 margherita pizzas"
+    - user: "I would like 50 chicken chargas"
       expect:
         not_tools: [confirm_order]
   assert_final:

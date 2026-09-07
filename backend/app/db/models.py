@@ -46,6 +46,15 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(Text)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+
+    # Staff identity. A null restaurant means an ordinary customer; a set one
+    # means this account may see and advance that kitchen's orders, and only
+    # that kitchen's (AUTH_SPEC section 5 - the ownership rule, one level up).
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="customer")
+    staff_restaurant_id: Mapped[str | None] = mapped_column(
+        ForeignKey("restaurants.id", ondelete="SET NULL")
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -53,6 +62,13 @@ class User(Base):
 
     __table_args__ = (
         CheckConstraint("status IN ('active','suspended','deleted')", name="users_status_valid"),
+        CheckConstraint("role IN ('customer','staff')", name="users_role_valid"),
+        # Staff without a kitchen could see everything; a customer with one
+        # would be staff by accident. Neither is allowed to exist.
+        CheckConstraint(
+            "(role = 'staff') = (staff_restaurant_id IS NOT NULL)",
+            name="users_staff_has_restaurant",
+        ),
     )
 
 
@@ -113,7 +129,7 @@ class MenuItem(Base):
     __table_args__ = (
         CheckConstraint("base_price > 0", name="menu_items_price_positive"),
         CheckConstraint(
-            "category IN ('Starters','Pizza','Pasta','Salad','Sides','Dessert','Drinks')",
+            "category IN ('Starters','BBQ','Karahi & Curries','Biryani & Rice','Breads','Sides','Desserts','Drinks')",
             name="menu_items_category_valid",
         ),
         Index(

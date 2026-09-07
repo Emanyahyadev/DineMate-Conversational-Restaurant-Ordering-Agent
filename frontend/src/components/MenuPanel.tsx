@@ -1,32 +1,32 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowClockwiseIcon,
   BowlFoodIcon,
   BreadIcon,
   CakeIcon,
+  CoffeeIcon,
   FireIcon,
   ForkKnifeIcon,
   GrainsSlashIcon,
   LeafIcon,
-  MartiniIcon,
-  PizzaIcon,
   PlantIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { Icon } from "@phosphor-icons/react";
 
-import { fetchMenu, type MenuItem } from "@/lib/api";
+import { fetchMenu, listRestaurants, type MenuItem, type Restaurant } from "@/lib/api";
 
 const CATEGORY_ICON: Record<string, Icon> = {
-  starters: BreadIcon,
-  pizza: PizzaIcon,
-  pasta: BowlFoodIcon,
-  salad: PlantIcon,
-  sides: BreadIcon,
-  dessert: CakeIcon,
-  drinks: MartiniIcon,
+  starters: ForkKnifeIcon,
+  bbq: FireIcon,
+  "karahi & curries": BowlFoodIcon,
+  "biryani & rice": BowlFoodIcon,
+  breads: BreadIcon,
+  sides: PlantIcon,
+  desserts: CakeIcon,
+  drinks: CoffeeIcon,
 };
 
 const TAG_ICON: Record<string, Icon> = {
@@ -44,6 +44,9 @@ const TAG_LABEL: Record<string, string> = {
   spicy: "Spicy",
 };
 
+// Halal is true of every dish here, so showing it on all 42 is noise.
+const HIDDEN_TAGS = new Set(["halal"]);
+
 type Status = "loading" | "ready" | "error";
 
 function groupByCategory(items: MenuItem[]): [string, MenuItem[]][] {
@@ -56,24 +59,15 @@ function groupByCategory(items: MenuItem[]): [string, MenuItem[]][] {
   return [...groups.entries()];
 }
 
-/** Kitchens in menu order, each with its own dishes. */
-function groupByRestaurant(items: MenuItem[]): [string, string, MenuItem[]][] {
-  const groups = new Map<string, { name: string; items: MenuItem[] }>();
-  for (const item of items) {
-    const bucket = groups.get(item.restaurant_id);
-    if (bucket) bucket.items.push(item);
-    else groups.set(item.restaurant_id, { name: item.restaurant_name, items: [item] });
-  }
-  return [...groups.entries()].map(([id, g]) => [id, g.name, g.items]);
-}
-
 export default function MenuPanel({
   onPick,
 }: {
-  /** Called with the item name when a customer taps a dish. */
+  /** Called with the dish name when a customer taps it. */
   onPick: (itemName: string) => void;
 }) {
   const [items, setItems] = useState<MenuItem[]>([]);
+  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [active, setActive] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [attempt, setAttempt] = useState(0);
 
@@ -81,9 +75,11 @@ export default function MenuPanel({
     let cancelled = false;
     void (async () => {
       try {
-        const data = await fetchMenu();
+        const [menu, rest] = await Promise.all([fetchMenu(), listRestaurants()]);
         if (cancelled) return;
-        setItems(data);
+        setItems(menu);
+        setRestaurants(rest.items);
+        setActive((current) => current ?? rest.items[0]?.id ?? null);
         setStatus("ready");
       } catch {
         if (!cancelled) setStatus("error");
@@ -99,19 +95,53 @@ export default function MenuPanel({
     setAttempt((n) => n + 1);
   }, []);
 
+  // One kitchen at a time. Five menus stacked in a narrow column meant endless
+  // scrolling and no sense of where you were.
+  const shown = useMemo(
+    () => (active ? items.filter((i) => i.restaurant_id === active) : items),
+    [items, active],
+  );
+  const current = restaurants.find((r) => r.id === active);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* pr-12 keeps the text clear of the close button in the mobile sheet. */}
-      <div className="shrink-0 border-b border-line py-4 pl-5 pr-12">
+      <div className="shrink-0 border-b border-line py-3.5 pl-4 pr-12">
         <h2 className="text-[15px] font-semibold tracking-tight text-ink">
-          Restaurants
+          Today&rsquo;s menu
         </h2>
         <p className="mt-0.5 text-[13px] leading-snug text-ink-muted">
-          Tap a dish to add it to your message. One order comes from one kitchen.
+          Tap a dish to add it to your message.
         </p>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+      {status === "ready" && restaurants.length > 0 && (
+        <div className="shrink-0 border-b border-line px-2 py-2">
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+            {restaurants.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => setActive(r.id)}
+                aria-pressed={r.id === active}
+                className={`shrink-0 rounded-full px-3 py-1.5 text-[12.5px] font-medium transition-colors ${
+                  r.id === active
+                    ? "bg-accent text-white"
+                    : "bg-canvas text-ink-soft hover:text-accent"
+                }`}
+              >
+                {r.name}
+              </button>
+            ))}
+          </div>
+          {current && (
+            <p className="mt-1.5 px-1 text-[12px] leading-snug text-ink-muted">
+              {current.cuisine} &middot; {current.item_count} dishes
+            </p>
+          )}
+        </div>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
         {status === "loading" && <MenuSkeleton />}
 
         {status === "error" && (
@@ -123,7 +153,7 @@ export default function MenuPanel({
             <button
               type="button"
               onClick={retry}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-danger/30 px-3 py-1.5 text-[13px] font-medium text-danger transition-colors hover:bg-danger/10"
+              className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-full border border-danger/30 px-3.5 text-[13px] font-medium text-danger transition-colors hover:bg-danger/10"
             >
               <ArrowClockwiseIcon size={15} />
               Try again
@@ -131,30 +161,24 @@ export default function MenuPanel({
           </div>
         )}
 
-        {status === "ready" && items.length === 0 && (
+        {status === "ready" && shown.length === 0 && (
           <div className="mx-2 mt-6 text-center">
             <ForkKnifeIcon size={26} className="mx-auto text-ink-muted" />
             <p className="mt-2 text-[13px] leading-snug text-ink-soft">
-              The kitchen has not published a menu yet. Ask in the chat and we
-              will tell you what is on.
+              Nothing on this menu yet. Ask in the chat and we will tell you what is on.
             </p>
           </div>
         )}
 
         {status === "ready" &&
-          groupByRestaurant(items).map(([restaurantId, restaurantName, dishes]) => (
-            <section key={restaurantId} className="mb-6 last:mb-0">
-              <h3 className="sticky top-0 z-10 -mx-3 mb-1 bg-surface px-5 py-2 text-[14px] font-semibold tracking-tight text-ink">
-                {restaurantName}
-              </h3>
-
-              {groupByCategory(dishes).map(([category, group]) => {
-                const CategoryIcon =
-                  CATEGORY_ICON[category.toLowerCase()] ?? ForkKnifeIcon;
-                return (
-              <section key={category} className="mb-4 last:mb-0">
-                <h3 className="flex items-center gap-2 px-2 pb-1 pt-2 text-[13px] font-semibold text-ink-soft">
-                  <CategoryIcon size={16} className="text-accent" />
+          groupByCategory(shown).map(([category, group]) => {
+            const CategoryIcon =
+              CATEGORY_ICON[category.toLowerCase()] ?? ForkKnifeIcon;
+            return (
+              <section key={category} className="mb-3 last:mb-0">
+                {/* Sticky, so you always know which course you are looking at. */}
+                <h3 className="sticky top-0 z-10 -mx-3 flex items-center gap-2 bg-surface px-5 py-1.5 text-[12.5px] font-semibold uppercase tracking-wide text-ink-muted">
+                  <CategoryIcon size={15} className="text-accent" />
                   {category}
                 </h3>
                 <ul>
@@ -166,7 +190,7 @@ export default function MenuPanel({
                         className="flex w-full items-start gap-3 rounded-2xl px-2 py-2.5 text-left transition-colors hover:bg-accent-soft active:scale-[0.99]"
                       >
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[14px] font-medium text-ink">
+                          <span className="block text-[14px] font-medium text-ink">
                             {item.name}
                           </span>
                           {item.description && (
@@ -174,24 +198,26 @@ export default function MenuPanel({
                               {item.description}
                             </span>
                           )}
-                          {item.dietary_tags.length > 0 && (
+                          {item.dietary_tags.some((t) => !HIDDEN_TAGS.has(t)) && (
                             <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                              {item.dietary_tags.map((tag) => {
-                                const TagIcon = TAG_ICON[tag];
-                                return (
-                                  <span
-                                    key={tag}
-                                    className="inline-flex items-center gap-1 rounded-full bg-canvas px-2 py-0.5 text-[11.5px] text-ink-soft"
-                                  >
-                                    {TagIcon && <TagIcon size={12} />}
-                                    {TAG_LABEL[tag] ?? tag.replace(/_/g, " ")}
-                                  </span>
-                                );
-                              })}
+                              {item.dietary_tags
+                                .filter((t) => !HIDDEN_TAGS.has(t))
+                                .map((tag) => {
+                                  const TagIcon = TAG_ICON[tag];
+                                  return (
+                                    <span
+                                      key={tag}
+                                      className="inline-flex items-center gap-1 rounded-full bg-canvas px-2 py-0.5 text-[11.5px] text-ink-soft"
+                                    >
+                                      {TagIcon && <TagIcon size={12} />}
+                                      {TAG_LABEL[tag] ?? tag.replace(/_/g, " ")}
+                                    </span>
+                                  );
+                                })}
                             </span>
                           )}
                         </span>
-                        <span className="shrink-0 font-mono text-[13px] tabular-nums text-ink-soft">
+                        <span className="shrink-0 whitespace-nowrap text-[13px] font-medium tabular-nums text-ink-soft">
                           {item.price_display}
                         </span>
                       </button>
@@ -199,10 +225,8 @@ export default function MenuPanel({
                   ))}
                 </ul>
               </section>
-                );
-              })}
-            </section>
-          ))}
+            );
+          })}
       </div>
     </div>
   );
@@ -217,14 +241,16 @@ function MenuSkeleton() {
           <div className="mt-3 space-y-3">
             {[0, 1].map((row) => (
               <div key={row} className="flex items-center gap-3">
-                <div className="animate-skeleton h-3.5 flex-1 rounded-full bg-line" />
-                <div className="animate-skeleton h-3.5 w-10 rounded-full bg-line" />
+                <div className="flex-1 space-y-1.5">
+                  <div className="animate-skeleton h-3.5 w-2/3 rounded-full bg-line" />
+                  <div className="animate-skeleton h-3 w-full rounded-full bg-line" />
+                </div>
+                <div className="animate-skeleton h-3.5 w-12 rounded-full bg-line" />
               </div>
             ))}
           </div>
         </div>
       ))}
-      <span className="sr-only">Loading the menu</span>
     </div>
   );
 }

@@ -53,18 +53,41 @@ def _normalise(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]", "", text.lower()).strip()
 
 
-def _dedupe_key(text: str, kind: str | None = None) -> str:
-    """Allergies collapse to the allergen itself.
+DIET_WORDS = [
+    "vegetarian",
+    "vegan",
+    "pescatarian",
+    "halal",
+    "kosher",
+    "gluten free",
+    "dairy free",
+]
 
-    The rule pass writes "Allergic to peanuts" and the model pass writes
-    "Nadia is allergic to peanuts."; storing both would show the customer the
-    same fact twice and waste the memory budget.
+
+def _dedupe_key(text: str, kind: str | None = None) -> str:
+    """Collapse two phrasings of the same fact onto one key.
+
+    Two passes write memory: fast rules ("Vegetarian") and the model ("The
+    customer follows a vegetarian diet."). Keyed on raw text those are two
+    entries, so the customer sees the same fact twice, the prompt budget pays
+    for it twice, and deleting one leaves the other behind.
+
+    A customer has one name, and one entry per allergen and per diet.
     """
     low = text.lower()
+
+    if kind == "name" or low.startswith("prefers to be called"):
+        return "name"
+
     if kind == "allergy" or "allerg" in low:
-        for word in ALLERGEN_WORDS:
+        for word in sorted(ALLERGEN_WORDS, key=len, reverse=True):
             if word in low:
                 return f"allergy:{word}"
+
+    for word in sorted(DIET_WORDS, key=len, reverse=True):
+        if word in low:
+            return f"diet:{word}"
+
     return _normalise(text)
 
 
@@ -109,6 +132,25 @@ async def profile_summary(user_id: str) -> str:
     if not lines:
         return "Nothing on file for this customer yet."
     return "\n".join(lines)
+
+
+async def known_allergens(user_id: str) -> list[str]:
+    """The allergens on file, as menu vocabulary.
+
+    Rule N3: this is applied to every menu search server-side, so the model
+    forgetting to pass an exclusion cannot produce an unsafe suggestion.
+    """
+    profile = await get_profile(user_id)
+    found: list[str] = []
+    for fact in profile.get("facts", []):
+        if fact.get("kind") != "allergy":
+            continue
+        low = (fact.get("text") or "").lower()
+        # Longest first, so "peanut" wins over "nut" and the pair is not doubled.
+        for word in sorted(ALLERGEN_WORDS, key=len, reverse=True):
+            if word in low and not any(word in seen for seen in found):
+                found.append(word)
+    return found
 
 
 async def remember(

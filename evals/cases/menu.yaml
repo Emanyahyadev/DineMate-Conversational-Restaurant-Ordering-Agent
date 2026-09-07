@@ -15,9 +15,9 @@
   us: [US-01]
   kpi: [A04, A05]
   turns:
-    - user: "show me your pasta"
+    - user: "show me your biryani"
       expect:
-        tools: [{ name: search_menu, args: { category: Pasta } }]
+        tools: [{ name: search_menu, args: { category: "Biryani & Rice" } }]
   assert_final:
     orders_created: 0
 
@@ -26,7 +26,7 @@
   us: [US-02]
   kpi: [A02, A05]
   turns:
-    - user: "what's in the Penne Arrabbiata?"
+    - user: "what's in the Daal Makhani?"
       expect:
         tools: [{ name: get_item_details, args: { item_id: r1-m4 } }]
   assert_final:
@@ -37,9 +37,9 @@
   us: [US-06]
   kpi: [A02, A04]
   seed:
-    unavailable: [r1-m7]
+    unavailable: [r5-m6]
   turns:
-    - user: "I would like the tiramisu"
+    - user: "I would like the gulab jamun"
       expect:
         not_tools: [confirm_order]
   assert_final:
@@ -68,6 +68,6 @@
   turns:
     - user: "what starters do you recommend?"
       expect:
-        reply_excludes: ["Satay Skewers"]
+        reply_excludes: ["Salan"]
   assert_final:
     orders_created: 0

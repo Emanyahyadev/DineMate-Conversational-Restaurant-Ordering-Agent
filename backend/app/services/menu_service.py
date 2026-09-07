@@ -12,7 +12,16 @@ from app.db.models import MenuItem, Restaurant
 from app.services.errors import ItemNotFound
 from app.services.money import money_fields
 
-CATEGORIES = ["Starters", "Pizza", "Pasta", "Salad", "Sides", "Dessert", "Drinks"]
+CATEGORIES = [
+    "Starters",
+    "BBQ",
+    "Karahi & Curries",
+    "Biryani & Rice",
+    "Breads",
+    "Sides",
+    "Desserts",
+    "Drinks",
+]
 DIETARY_TAGS = ["vegetarian", "vegan", "gluten_free", "halal", "spicy"]
 ALLERGENS = [
     "peanut",
@@ -30,6 +39,9 @@ ALLERGENS = [
 # (ARCHITECTURE.md section 10).
 _CACHE: dict[str, Any] = {"at": 0.0, "items": None}
 _CACHE_TTL_SECONDS = 60
+
+# The agent asks for a handful; a browse can ask for more.
+MAX_RESULTS = 12
 
 
 def _serialise(item: MenuItem) -> dict[str, Any]:
@@ -81,7 +93,7 @@ async def search(
     restaurant_id: str | None = None,
     dietary_tags: list[str] | None = None,
     exclude_allergens: list[str] | None = None,
-    limit: int = 6,
+    limit: int = 8,
 ) -> list[dict[str, Any]]:
     items = await _all_offerable(session)
 
@@ -106,16 +118,41 @@ async def search(
         terms = [t for t in q.split() if len(t) > 2]
 
         def score(i: dict[str, Any]) -> int:
-            hay = f"{i['name']} {i['description']} {' '.join(i['dietary_tags'])}".lower()
+            hay = (
+                f"{i['name']} {i['description']} {i['category']} "
+                f"{i['restaurant_name']} {' '.join(i['dietary_tags'])}"
+            ).lower()
             if q in hay:
                 return 100
             return sum(1 for t in terms if t in hay)
 
-        scored = [(score(i), i) for i in items]
-        matched = [i for s, i in scored if s > 0]
+        scored = sorted(((score(i), i) for i in items), key=lambda p: -p[0])
+        matched = [i for sc, i in scored if sc > 0]
         items = matched if matched else items
 
-    return items[: max(1, min(limit, 10))]
+    limit = max(1, min(limit, MAX_RESULTS))
+
+    # Spread across kitchens unless the customer asked about one. Taking the
+    # first N in menu order returned six dishes from a single restaurant, so the
+    # agent answered "what is on the menu" having never seen the other four.
+    if not restaurant_id and len(items) > limit:
+        items = _round_robin(items)
+
+    return items[:limit]
+
+
+def _round_robin(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reorder so consecutive results come from different restaurants."""
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        buckets.setdefault(item["restaurant_id"], []).append(item)
+
+    out: list[dict[str, Any]] = []
+    while any(buckets.values()):
+        for key in list(buckets):
+            if buckets[key]:
+                out.append(buckets[key].pop(0))
+    return out
 
 
 async def get_item(session: AsyncSession, item_id: str) -> dict[str, Any]:
@@ -179,3 +216,33 @@ async def list_restaurants(session: AsyncSession) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+async def overview(session: AsyncSession, restaurant_id: str | None = None) -> dict[str, Any]:
+    """The whole menu in one compact shape: names and prices, grouped.
+
+    A search returns a handful of dishes. When the customer asks what a kitchen
+    serves, a handful is a wrong answer dressed as a right one, so this returns
+    every offerable dish - just names and prices, which stays small enough for
+    the prompt budget.
+    """
+    items = await _all_offerable(session)
+    if restaurant_id:
+        items = [i for i in items if i["restaurant_id"] == restaurant_id.strip()]
+
+    kitchens: dict[str, dict[str, Any]] = {}
+    for item in items:
+        k = kitchens.setdefault(
+            item["restaurant_id"],
+            {"restaurant": item["restaurant_name"], "categories": {}},
+        )
+        k["categories"].setdefault(item["category"], []).append(
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "price": item["price_display"],
+                "tags": item["dietary_tags"],
+            }
+        )
+
+    return {"total_items": len(items), "kitchens": list(kitchens.values())}

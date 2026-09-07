@@ -18,6 +18,7 @@ export default function ChatHistory({
   onNew,
   onOpen,
   onDelete,
+  fill = false,
 }: {
   conversations: ConversationSummary[];
   activeId: string | null;
@@ -25,12 +26,14 @@ export default function ChatHistory({
   onNew: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Fill the height of its own column, instead of capping at a few rows. */
+  fill?: boolean;
 }) {
   const shown = conversations.filter((c) => !c.empty || c.id === activeId);
 
   return (
-    <div className="flex max-h-full flex-col">
-      <div className="shrink-0 border-b border-line px-4 py-3.5">
+    <div className={`flex flex-col ${fill ? "h-full" : "max-h-full"}`}>
+      <div className="shrink-0 border-b border-line px-3 py-3">
         <button
           type="button"
           onClick={onNew}
@@ -43,7 +46,11 @@ export default function ChatHistory({
       </div>
 
       {shown.length > 0 && (
-        <ul className="max-h-[22vh] min-h-0 overflow-y-auto px-2 py-2">
+        <ul
+          className={`min-h-0 overflow-y-auto px-2 py-2 ${
+            fill ? "flex-1" : "max-h-[22vh]"
+          }`}
+        >
           {shown.map((c) => (
             <li key={c.id} className="flex items-center gap-1">
               <button

@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import auth, chat, menu, orders
+from app.api import auth, chat, kitchen, menu, orders
 from app.config import settings
 from app.db import postgres
 from app.services import memory_service
@@ -82,6 +82,7 @@ app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(menu.router)
 app.include_router(orders.router)
+app.include_router(kitchen.router)
 app.include_router(orders.internal_router)
 
 

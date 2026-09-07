@@ -17,7 +17,7 @@
     cart:
       - { item_id: r1-m1, quantity: 1 }
   turns:
-    - user: "also add a classic cheeseburger"
+    - user: "also add a chapli kabab"
   assert_final:
     cart_lines: [{ item_id: r1-m1, quantity: 1 }]
     orders_created: 0
@@ -33,6 +33,27 @@
   turns:
     - user: "what starters do you recommend?"
       expect:
-        reply_excludes: ["Summer Rolls", "Green Papaya Salad", "Satay"]
+        reply_excludes: ["Salan", "Salan", "Satay"]
+  assert_final:
+    orders_created: 0
+
+- id: EV-REST-04
+  title: "'What's on the menu' reaches for the whole menu, not a sample"
+  us: [US-01]
+  kpi: [A02, A04]
+  turns:
+    - user: "what's on the menu?"
+      expect:
+        tools: [{ name: get_full_menu }]
+        not_tools: [add_to_cart, confirm_order]
+  assert_final:
+    orders_created: 0
+
+- id: EV-REST-05
+  title: A browse names dishes from more than one kitchen
+  us: [US-01]
+  kpi: [A02]
+  turns:
+    - user: "I am hungry, what do you have?"
   assert_final:
     orders_created: 0

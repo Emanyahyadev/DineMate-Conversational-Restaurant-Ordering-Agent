@@ -100,15 +100,9 @@ async def search_menu(
 
     # The customer's recorded allergies are enforced server-side, so the model
     # forgetting to pass them cannot produce an unsafe suggestion (Rule N3).
-    profile = await memory_service.get_profile(c.user_id)
-    known = [
-        word
-        for f in profile.get("facts", [])
-        if f.get("kind") == "allergy"
-        for word in menu_service.ALLERGENS
-        if word in f.get("text", "").lower()
-    ]
-    banned = sorted(set((exclude_allergens or []) + known))
+    banned = sorted(
+        set((exclude_allergens or []) + await memory_service.known_allergens(c.user_id))
+    )
 
     result = await menu_service.search(
         c.session,
@@ -149,6 +143,23 @@ async def get_item_details(
     except DomainError as exc:
         result = _err(exc)
     c.record("get_item_details", {"item_id": item_id}, result)
+    return result
+
+
+@function_tool
+async def get_full_menu(
+    ctx: RunContextWrapper[ChatContext], restaurant_id: str | None = None
+) -> dict[str, Any]:
+    """Every dish a kitchen serves, grouped by course, with prices. Use this when
+    the customer asks what is on the menu or what a restaurant offers - a search
+    returns only a handful and would leave most of the menu unmentioned.
+
+    Args:
+        restaurant_id: One restaurant, e.g. 'r3'. Leave it out for all of them.
+    """
+    c = ctx.context
+    result = await menu_service.overview(c.session, _as_text(restaurant_id))
+    c.record("get_full_menu", {"restaurant_id": restaurant_id}, result)
     return result
 
 
@@ -355,6 +366,7 @@ async def cancel_order(
 
 TOOLS = [
     list_restaurants,
+    get_full_menu,
     search_menu,
     get_item_details,
     add_to_cart,

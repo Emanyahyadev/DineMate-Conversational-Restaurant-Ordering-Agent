@@ -40,11 +40,21 @@ def order_total(subtotal_cents: int, tax_cents: int, delivery_fee_cents: int = 0
     return subtotal_cents + tax_cents + delivery_fee_cents
 
 
-def display(cents: int) -> str:
-    """The only place a decimal point appears. Rule $5."""
-    sign = "-" if cents < 0 else ""
-    cents = abs(cents)
-    return f"{sign}${cents // 100}.{cents % 100:02d}"
+def display(minor: int) -> str:
+    """The only place a currency symbol or decimal point appears (Rule $5).
+
+    ``currency_decimals`` is 0 for rupees, where the minor unit is the rupee
+    itself, and 2 for currencies with cents.
+    """
+    sign = "-" if minor < 0 else ""
+    minor = abs(minor)
+    symbol = settings.currency_symbol
+    places = settings.currency_decimals
+
+    if places == 0:
+        return f"{sign}{symbol}{minor:,}"
+    scale = 10**places
+    return f"{sign}{symbol}{minor // scale:,}.{minor % scale:0{places}d}"
 
 
 def money_fields(prefix: str, cents: int) -> dict[str, object]:

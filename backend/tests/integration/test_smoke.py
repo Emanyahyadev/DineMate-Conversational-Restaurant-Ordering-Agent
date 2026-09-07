@@ -1,5 +1,5 @@
 """First end-to-end proof: register, browse, order, confirm."""
-import pytest
+from app.services import money
 from tests.conftest import register_and_login
 
 
@@ -23,10 +23,14 @@ async def test_cart_flow(client):
     assert r.status_code == 200, r.text
     cart = r.json()["cart"]
     assert cart["lines"][0]["quantity"] == 2
-    assert cart["subtotal_cents"] == 1900
-    assert cart["tax_cents"] == 152
-    assert cart["total_cents"] == 2052
-    assert cart["total_display"] == "$20.52"
+
+    # Derived from the seeded price and the configured rate: hardcoding a total
+    # ties the test to one currency and one tax regime.
+    unit = cart["lines"][0]["unit_price_cents"]
+    assert cart["subtotal_cents"] == unit * 2
+    assert cart["tax_cents"] == money.tax_for(cart["subtotal_cents"])
+    assert cart["total_cents"] == cart["subtotal_cents"] + cart["tax_cents"]
+    assert cart["total_display"] == money.display(cart["total_cents"])
 
 
 async def test_confirm_requires_token(client):
@@ -40,7 +44,7 @@ async def test_confirm_requires_token(client):
 async def test_full_order(client):
     c = await register_and_login(client, "order@dinemate.example")
     await c.post("/api/cart/lines", json={"item_id": "r1-m1", "quantity": 2})
-    await c.post("/api/cart/lines", json={"item_id": "r1-m8", "quantity": 1})
+    await c.post("/api/cart/lines", json={"item_id": "r1-m9", "quantity": 1})
 
     r = await c.get("/api/cart")
     token = r.json()["confirmation_token"]
@@ -54,6 +58,6 @@ async def test_full_order(client):
     assert r.status_code == 201, r.text
     order = r.json()["order"]
     assert order["status"] == "confirmed"
-    assert order["subtotal_cents"] == 1900 + 350
+    assert order["subtotal_cents"] == sum(l["line_total_cents"] for l in order["lines"])
     assert order["total_cents"] == order["subtotal_cents"] + order["tax_cents"]
     assert order["id"].startswith("ORD-")

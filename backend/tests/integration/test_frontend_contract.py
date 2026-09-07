@@ -1,6 +1,7 @@
 """The exact call sequence the browser makes (FRONTEND_SPEC section 4)."""
 import json
 
+from app.config import settings
 from tests.conftest import register_and_login
 
 
@@ -35,7 +36,7 @@ async def test_browser_order_path(client):
     )
     assert r.status_code == 201
     order = r.json()["order"]
-    assert order["total_display"].startswith("$")
+    assert order["total_display"].startswith(settings.currency_symbol.strip())
     assert order["eta_minutes"] > 0
 
     # Cart is empty afterwards, so the panel and the total bar disappear
@@ -48,7 +49,7 @@ async def test_cart_change_disables_place_button(client):
     await c.post("/api/cart/lines", json={"item_id": "r1-m1", "quantity": 1})
     token = (await c.get("/api/cart")).json()["confirmation_token"]
 
-    await c.post("/api/cart/lines", json={"item_id": "r1-m6", "quantity": 1})
+    await c.post("/api/cart/lines", json={"item_id": "r1-m5", "quantity": 1})
 
     r = await c.post(
         "/api/orders",

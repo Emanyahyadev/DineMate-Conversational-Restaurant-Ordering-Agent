@@ -1,198 +1,200 @@
-# DineMate mock marketplace: five kitchens, each with its own menu.
+# DineMate marketplace: five Pakistani kitchens, each with its own menu.
 # One source of truth for dev, tests and evals (TEST_STRATEGY.md section 11).
-# Prices are integer minor units (cents). Allergens are only marked verified
-# where the data is real: Rule M3 means "unverified" is not "safe".
+#
+# Prices are whole rupees (CURRENCY_DECIMALS=0, so the minor unit IS the rupee).
+# Everything here is halal, so `halal` is tagged on every dish rather than left
+# implied - a customer filtering for it should get the whole menu, not silence.
+# `allergens_verified` is only true where the allergen list is genuinely complete;
+# Rule M3 means unverified is never treated as safe.
 
 - id: r1
-  name: Nonna Vera
-  cuisine: Italian
-  description: Wood-fired pizza and hand-rolled pasta, the way a nonna would.
+  name: Lahori Charga House
+  cuisine: Lahori
+  description: Charcoal charga, tawa karahi and the kind of naan that needs no butter.
   sort_order: 10
   items:
-    - { id: r1-m1, name: Margherita Pizza, category: Pizza, base_price: 950,
-        description: "Hand-stretched base, San Marzano tomato, fior di latte, fresh basil.",
-        dietary_tags: [vegetarian], allergens: [gluten, dairy], allergens_verified: true }
-    - id: r1-m2
-      name: Pepperoni Pizza
-      category: Pizza
-      base_price: 1150
-      description: "Double pepperoni, mozzarella, a little chilli honey on the crust."
-      allergens: [gluten, dairy]
-      allergens_verified: true
-      option_groups:
-        - name: Size
-          min_select: 1
-          max_select: 1
-          options:
-            - { name: Regular, price_delta: 0 }
-            - { name: Large, price_delta: 300 }
-    - { id: r1-m3, name: Chicken Alfredo, category: Pasta, base_price: 1200,
-        description: "Fettuccine, grilled chicken, parmesan cream.",
-        allergens: [gluten, dairy, egg], allergens_verified: true }
-    - { id: r1-m4, name: Penne Arrabbiata, category: Pasta, base_price: 1000,
-        description: "Penne in a slow-cooked tomato and chilli sauce. Properly hot.",
-        dietary_tags: [vegan, spicy], allergens: [gluten], allergens_verified: true }
-    - { id: r1-m5, name: Caesar Salad, category: Salad, base_price: 750,
-        description: "Cos lettuce, anchovy dressing, sourdough croutons, parmesan.",
-        allergens: [gluten, dairy, egg, fish], allergens_verified: true }
-    - { id: r1-m6, name: Garlic Bread, category: Sides, base_price: 400,
-        description: "Warm sourdough, garlic butter, parsley.",
-        dietary_tags: [vegetarian], allergens: [gluten, dairy], allergens_verified: true }
-    - { id: r1-m7, name: Tiramisu, category: Dessert, base_price: 600,
-        description: "Mascarpone, espresso-soaked savoiardi, cocoa.",
-        dietary_tags: [vegetarian], allergens: [gluten, dairy, egg], allergens_verified: true }
-    - { id: r1-m8, name: Fresh Lemonade, category: Drinks, base_price: 350,
-        description: "Pressed lemons, cane sugar, mint.",
-        dietary_tags: [vegan], allergens: [], allergens_verified: true }
+    - { id: r1-m1, name: Chicken Charga, category: BBQ, base_price: 1450,
+        description: "Whole spring chicken, steamed in spices then deep fried until the skin crackles.",
+        dietary_tags: [halal, gluten_free, spicy], allergens: [], allergens_verified: true }
+    - { id: r1-m2, name: Chicken Karahi, category: "Karahi & Curries", base_price: 1650,
+        description: "Cooked on the tawa with tomato, ginger and green chilli. Serves two.",
+        dietary_tags: [halal, spicy, gluten_free], allergens: [dairy], allergens_verified: true }
+    - { id: r1-m3, name: Mutton Karahi, category: "Karahi & Curries", base_price: 2200,
+        description: "Bone-in mutton, slow-cooked until it gives way. Rich and peppery.",
+        dietary_tags: [halal, spicy, gluten_free], allergens: [dairy], allergens_verified: true }
+    - { id: r1-m4, name: Daal Makhani, category: "Karahi & Curries", base_price: 650,
+        description: "Black lentils simmered overnight with butter and cream.",
+        dietary_tags: [halal, vegetarian, gluten_free], allergens: [dairy],
+        allergens_verified: true }
+    - { id: r1-m5, name: Garlic Naan, category: Breads, base_price: 150,
+        description: "Pulled to order in the tandoor, brushed with garlic and coriander.",
+        dietary_tags: [halal, vegetarian], allergens: [gluten, dairy], allergens_verified: true }
+    - { id: r1-m6, name: Roghni Naan, category: Breads, base_price: 180,
+        description: "Enriched with milk and sesame, glossy on top.",
+        dietary_tags: [halal, vegetarian], allergens: [gluten, dairy, sesame],
+        allergens_verified: true }
+    - { id: r1-m7, name: Kachumber Salad, category: Sides, base_price: 250,
+        description: "Cucumber, tomato and onion with lemon and black salt.",
+        dietary_tags: [halal, vegan, vegetarian, gluten_free], allergens: [],
+        allergens_verified: true }
+    - { id: r1-m8, name: Mint Raita, category: Sides, base_price: 200,
+        description: "Whisked yoghurt, mint and roasted cumin.",
+        dietary_tags: [halal, vegetarian, gluten_free], allergens: [dairy],
+        allergens_verified: true }
+    - { id: r1-m9, name: Fresh Lime Soda, category: Drinks, base_price: 220,
+        description: "Pressed lime, soda, your choice of sweet or salted.",
+        dietary_tags: [halal, vegan, vegetarian, gluten_free], allergens: [],
+        allergens_verified: true }
 
 - id: r2
-  name: Chilli Bazaar
-  cuisine: North Indian
-  description: Tandoor, slow-cooked curries and breads pulled to order.
+  name: Karachi Seekh & Broast
+  cuisine: Karachi BBQ
+  description: Coal-fired seekh, bun kababs and broast the way Burns Road does it.
   sort_order: 20
   items:
-    - { id: r2-m1, name: Onion Bhaji, category: Starters, base_price: 550,
-        description: "Sliced onion in spiced gram flour, fried crisp.",
-        dietary_tags: [vegetarian, vegan, gluten_free], allergens: [], allergens_verified: true }
-    - { id: r2-m2, name: Chicken Tikka Skewers, category: Starters, base_price: 800,
-        description: "Yoghurt and chilli marinade, charred in the tandoor.",
-        dietary_tags: [gluten_free, halal], allergens: [dairy], allergens_verified: true }
-    - { id: r2-m3, name: Butter Chicken, category: Pasta, base_price: 1350,
-        description: "Tandoori chicken in a tomato and fenugreek cream. Mild.",
-        dietary_tags: [halal], allergens: [dairy, tree_nut], allergens_verified: true }
-    - { id: r2-m4, name: Lamb Rogan Josh, category: Pasta, base_price: 1500,
-        description: "Kashmiri chilli, slow-cooked shoulder. Medium heat.",
-        dietary_tags: [halal, spicy, gluten_free], allergens: [dairy], allergens_verified: true }
-    - { id: r2-m5, name: Chana Masala, category: Pasta, base_price: 1050,
-        description: "Chickpeas, tomato, amchur. Naturally vegan.",
-        dietary_tags: [vegan, vegetarian, gluten_free], allergens: [], allergens_verified: true }
-    - { id: r2-m6, name: Garlic Naan, category: Sides, base_price: 400,
-        description: "Pulled to order, brushed with garlic butter.",
-        dietary_tags: [vegetarian], allergens: [gluten, dairy], allergens_verified: true }
-    - { id: r2-m7, name: Kachumber Salad, category: Salad, base_price: 500,
-        description: "Cucumber, tomato, red onion, lemon and toasted cumin.",
-        dietary_tags: [vegan, vegetarian, gluten_free], allergens: [], allergens_verified: true }
-    - { id: r2-m8, name: Pistachio Kulfi, category: Dessert, base_price: 650,
-        description: "Dense set milk ice, cardamom and pistachio.",
-        dietary_tags: [vegetarian], allergens: [dairy, tree_nut], allergens_verified: true }
-    - { id: r2-m9, name: Salted Lassi, category: Drinks, base_price: 400,
-        description: "Churned yoghurt, salt, cumin.",
-        dietary_tags: [vegetarian, gluten_free], allergens: [dairy], allergens_verified: true }
-
-- id: r3
-  name: Hanoi Tram
-  cuisine: Vietnamese
-  description: Broth simmered overnight, herbs cut the same morning.
-  sort_order: 30
-  items:
-    - { id: r3-m1, name: Summer Rolls, category: Starters, base_price: 700,
-        description: "Rice paper, prawn, mint and vermicelli, peanut dipping sauce.",
-        dietary_tags: [gluten_free], allergens: [shellfish, peanut, soy],
-        allergens_verified: true }
-    - { id: r3-m2, name: Crispy Tofu Bites, category: Starters, base_price: 600,
-        description: "Silken tofu, rice flour crust, chilli salt.",
-        dietary_tags: [vegan, vegetarian], allergens: [soy], allergens_verified: true }
-    - { id: r3-m3, name: Beef Pho, category: Pasta, base_price: 1250,
-        description: "Twelve-hour bone broth, brisket, flat rice noodles.",
-        dietary_tags: [gluten_free], allergens: [fish, soy], allergens_verified: true }
-    - { id: r3-m4, name: Mushroom Pho, category: Pasta, base_price: 1100,
-        description: "Shiitake and charred onion broth, no fish sauce.",
-        dietary_tags: [vegan, vegetarian, gluten_free], allergens: [soy],
-        allergens_verified: true }
-    - { id: r3-m5, name: Lemongrass Chicken Banh Mi, category: Sides, base_price: 900,
-        description: "Baguette, pickled carrot and daikon, coriander, chilli.",
-        allergens: [gluten, egg, soy], allergens_verified: true }
-    - { id: r3-m6, name: Green Papaya Salad, category: Salad, base_price: 800,
-        description: "Shredded papaya, peanuts, nuoc cham. Sharp and hot.",
-        dietary_tags: [spicy, gluten_free], allergens: [peanut, fish],
-        allergens_verified: true }
-    - { id: r3-m7, name: Pandan Coconut Jelly, category: Dessert, base_price: 550,
-        description: "Layered coconut cream and pandan.",
-        dietary_tags: [vegan, vegetarian, gluten_free], allergens: [], allergens_verified: true }
-    - { id: r3-m8, name: Vietnamese Iced Coffee, category: Drinks, base_price: 450,
-        description: "Phin-brewed robusta over condensed milk.",
-        dietary_tags: [vegetarian], allergens: [dairy], allergens_verified: true }
-
-- id: r4
-  name: Ember & Bun
-  cuisine: Burgers
-  description: Dry-aged patties on a flat-top, buns baked next door.
-  sort_order: 40
-  items:
-    - id: r4-m1
-      name: Classic Cheeseburger
-      category: Starters
-      base_price: 1050
-      description: "Dry-aged patty, American cheese, pickles, house sauce."
-      allergens: [gluten, dairy, egg, sesame]
+    - id: r2-m1
+      name: Chicken Seekh Kabab
+      category: BBQ
+      base_price: 480
+      description: "Minced chicken with green chilli and coriander, four skewers."
+      dietary_tags: [halal, spicy, gluten_free]
+      allergens: []
       allergens_verified: true
       option_groups:
-        - name: Patties
+        - name: Portion
           min_select: 1
           max_select: 1
           options:
-            - { name: Single, price_delta: 0 }
-            - { name: Double, price_delta: 350 }
-    - { id: r4-m2, name: Buttermilk Chicken Burger, category: Starters, base_price: 1150,
-        description: "Overnight buttermilk brine, fried crisp, slaw.",
-        allergens: [gluten, dairy, egg, sesame], allergens_verified: true }
-    - { id: r4-m3, name: Halloumi Burger, category: Starters, base_price: 1000,
-        description: "Griddled halloumi, roast pepper, harissa mayo.",
-        dietary_tags: [vegetarian], allergens: [gluten, dairy, egg, sesame],
+            - { name: Four skewers, price_delta: 0 }
+            - { name: Eight skewers, price_delta: 420 }
+    - { id: r2-m2, name: Beef Seekh Kabab, category: BBQ, base_price: 520,
+        description: "Hand-minced beef, fat rendered over coals. Four skewers.",
+        dietary_tags: [halal, spicy, gluten_free], allergens: [], allergens_verified: true }
+    - { id: r2-m3, name: Malai Boti, category: BBQ, base_price: 620,
+        description: "Chicken thigh in a cream and cheese marinade. Mild.",
+        dietary_tags: [halal, gluten_free], allergens: [dairy], allergens_verified: true }
+    - { id: r2-m4, name: Chicken Broast, category: Starters, base_price: 750,
+        description: "Pressure-fried quarter chicken, crisp coating, garlic sauce on the side.",
+        dietary_tags: [halal], allergens: [gluten, egg, dairy], allergens_verified: true }
+    - { id: r2-m5, name: Bun Kabab, category: Starters, base_price: 280,
+        description: "Spiced patty, imli chutney and onion in a griddled bun.",
+        dietary_tags: [halal, spicy], allergens: [gluten, egg], allergens_verified: true }
+    - { id: r2-m6, name: Loaded Fries, category: Sides, base_price: 420,
+        description: "Fries under chicken tikka, jalapeno and cheese sauce.",
+        dietary_tags: [halal, spicy], allergens: [dairy], allergens_verified: true }
+    - { id: r2-m7, name: Paratha, category: Breads, base_price: 130,
+        description: "Layered, griddled in ghee.",
+        dietary_tags: [halal, vegetarian], allergens: [gluten, dairy], allergens_verified: true }
+    - { id: r2-m8, name: Mint Chutney, category: Sides, base_price: 90,
+        description: "Mint, coriander and green chilli, blitzed sharp.",
+        dietary_tags: [halal, vegan, vegetarian, gluten_free, spicy], allergens: [],
         allergens_verified: true }
-    - { id: r4-m4, name: Beyond Burger, category: Starters, base_price: 1200,
-        description: "Plant patty, vegan cheese, smoked onion.",
-        dietary_tags: [vegan, vegetarian], allergens: [gluten, soy, sesame],
+    - { id: r2-m9, name: Bottled Water, category: Drinks, base_price: 80,
+        description: "Chilled, 500ml.",
+        dietary_tags: [halal, vegan, vegetarian, gluten_free], allergens: [],
         allergens_verified: true }
-    - { id: r4-m5, name: Rosemary Fries, category: Sides, base_price: 450,
-        description: "Triple-cooked, rosemary salt.",
-        dietary_tags: [vegan, vegetarian, gluten_free], allergens: [],
+
+- id: r3
+  name: Sindhi Biryani Co
+  cuisine: Biryani
+  description: Long-grain sella rice, layered and sealed. Nothing else on the stove.
+  sort_order: 30
+  items:
+    - { id: r3-m1, name: Chicken Sindhi Biryani, category: "Biryani & Rice", base_price: 550,
+        description: "Aloo, prunes and yoghurt masala, layered with sella rice. Properly hot.",
+        dietary_tags: [halal, spicy], allergens: [dairy], allergens_verified: true }
+    - { id: r3-m2, name: Beef Biryani, category: "Biryani & Rice", base_price: 680,
+        description: "Slow-cooked shank, kewra and saffron through the rice.",
+        dietary_tags: [halal, spicy], allergens: [dairy], allergens_verified: true }
+    - { id: r3-m3, name: Chicken Pulao, category: "Biryani & Rice", base_price: 480,
+        description: "Yakhni-cooked rice, whole spice, no chilli heat.",
+        dietary_tags: [halal], allergens: [], allergens_verified: true }
+    - { id: r3-m4, name: Vegetable Biryani, category: "Biryani & Rice", base_price: 420,
+        description: "Potato, carrot and peas in the same masala, no meat stock.",
+        dietary_tags: [halal, vegetarian], allergens: [dairy], allergens_verified: true }
+    - { id: r3-m5, name: Zarda, category: Desserts, base_price: 260,
+        description: "Sweet saffron rice with khoya, sultanas and pistachio.",
+        dietary_tags: [halal, vegetarian], allergens: [dairy, tree_nut],
         allergens_verified: true }
-    - { id: r4-m6, name: Loaded Chilli Fries, category: Sides, base_price: 750,
-        description: "Beef chilli, cheese sauce, jalapenos.",
-        dietary_tags: [spicy], allergens: [dairy], allergens_verified: true }
-    - { id: r4-m7, name: Buttermilk Slaw, category: Salad, base_price: 400,
-        description: "White cabbage, fennel seed, buttermilk dressing.",
-        dietary_tags: [vegetarian, gluten_free], allergens: [dairy, egg],
+    - { id: r3-m6, name: Shami Kabab, category: Starters, base_price: 240,
+        description: "Two beef and chana daal patties, bound with egg.",
+        dietary_tags: [halal], allergens: [egg], allergens_verified: true }
+    - { id: r3-m7, name: Raita, category: Sides, base_price: 150,
+        description: "Plain yoghurt with cucumber and cumin.",
+        dietary_tags: [halal, vegetarian, gluten_free], allergens: [dairy],
         allergens_verified: true }
-    - { id: r4-m8, name: Salted Caramel Shake, category: Drinks, base_price: 650,
-        description: "Frozen custard, burnt caramel, sea salt.",
-        dietary_tags: [vegetarian], allergens: [dairy], allergens_verified: true }
+    - { id: r3-m8, name: Salan, category: Sides, base_price: 180,
+        description: "Peanut and sesame gravy, sour with tamarind.",
+        dietary_tags: [halal, vegan, vegetarian, spicy], allergens: [peanut, sesame],
+        allergens_verified: true }
+
+- id: r4
+  name: Peshawari Namak Mandi
+  cuisine: Pashtun
+  description: Salt, meat and fat. No masala, no shortcuts, cooked in its own stock.
+  sort_order: 40
+  items:
+    - { id: r4-m1, name: Namkeen Mutton Karahi, category: "Karahi & Curries", base_price: 2600,
+        description: "Mutton, salt and green chilli only, finished in its own fat. Serves two.",
+        dietary_tags: [halal, gluten_free], allergens: [], allergens_verified: true }
+    - { id: r4-m2, name: Chapli Kabab, category: BBQ, base_price: 560,
+        description: "Flat minced beef kabab with tomato, pomegranate seed and coriander.",
+        dietary_tags: [halal, spicy], allergens: [egg, gluten], allergens_verified: true }
+    - { id: r4-m3, name: Kabuli Pulao, category: "Biryani & Rice", base_price: 890,
+        description: "Lamb under rice with caramelised carrot, sultana and almond.",
+        dietary_tags: [halal], allergens: [tree_nut], allergens_verified: true }
+    - { id: r4-m4, name: Lamb Tikka, category: BBQ, base_price: 780,
+        description: "Chunks of shoulder, salt and coal. Nothing more.",
+        dietary_tags: [halal, gluten_free], allergens: [], allergens_verified: true }
+    - { id: r4-m5, name: Peshawari Naan, category: Breads, base_price: 190,
+        description: "Wide tandoor naan, stone-baked, crisp at the edge.",
+        dietary_tags: [halal, vegetarian], allergens: [gluten], allergens_verified: true }
+    - { id: r4-m6, name: Tarkari, category: "Karahi & Curries", base_price: 520,
+        description: "Seasonal vegetables cooked down in tomato and ghee.",
+        dietary_tags: [halal, vegetarian, gluten_free], allergens: [dairy],
+        allergens_verified: true }
+    - { id: r4-m7, name: Green Tea (Qehwa), category: Drinks, base_price: 120,
+        description: "Cardamom qehwa, poured from height.",
+        dietary_tags: [halal, vegan, vegetarian, gluten_free], allergens: [],
+        allergens_verified: true }
+    - { id: r4-m8, name: Sheer Khurma, category: Desserts, base_price: 320,
+        description: "Vermicelli in sweetened milk with dates and pistachio.",
+        dietary_tags: [halal, vegetarian], allergens: [dairy, tree_nut, gluten],
+        allergens_verified: true }
 
 - id: r5
-  name: Green Room
-  cuisine: Plant-based
-  description: Vegetables first. Everything here is meat-free by default.
+  name: Chai Khana
+  cuisine: Chai & Nashta
+  description: Doodh patti, halwa puri and everything you want at seven in the morning.
   sort_order: 50
   items:
-    - { id: r5-m1, name: Miso Aubergine, category: Starters, base_price: 750,
-        description: "Charred aubergine, white miso glaze, sesame.",
-        dietary_tags: [vegan, vegetarian], allergens: [soy, sesame],
+    - { id: r5-m1, name: Doodh Patti Chai, category: Drinks, base_price: 150,
+        description: "Boiled long with full-fat milk. No water.",
+        dietary_tags: [halal, vegetarian], allergens: [dairy], allergens_verified: true }
+    - { id: r5-m2, name: Kashmiri Chai, category: Drinks, base_price: 250,
+        description: "Pink, salted, topped with crushed pistachio.",
+        dietary_tags: [halal, vegetarian], allergens: [dairy, tree_nut],
         allergens_verified: true }
-    - { id: r5-m2, name: Sweetcorn Fritters, category: Starters, base_price: 700,
-        description: "Corn, spring onion, lime crema.",
-        dietary_tags: [vegetarian], allergens: [gluten, dairy, egg],
+    - { id: r5-m3, name: Halwa Puri, category: Starters, base_price: 380,
+        description: "Two puris, sooji halwa, channa and aloo bhujia.",
+        dietary_tags: [halal, vegetarian], allergens: [gluten, dairy],
         allergens_verified: true }
-    - { id: r5-m3, name: Harissa Cauliflower Steak, category: Pasta, base_price: 1150,
-        description: "Whole roast cauliflower, rose harissa, almond crumb.",
-        dietary_tags: [vegan, vegetarian, spicy], allergens: [tree_nut],
+    - { id: r5-m4, name: Aloo Anda Paratha, category: Breads, base_price: 320,
+        description: "Potato-stuffed paratha with a fried egg on top.",
+        dietary_tags: [halal, vegetarian], allergens: [gluten, dairy, egg],
         allergens_verified: true }
-    - { id: r5-m4, name: Wild Mushroom Orzo, category: Pasta, base_price: 1250,
-        description: "Orzo, girolles, tarragon, cashew cream.",
-        dietary_tags: [vegan, vegetarian], allergens: [gluten, tree_nut],
+    - { id: r5-m5, name: Nihari, category: "Karahi & Curries", base_price: 720,
+        description: "Overnight beef shank stew, ginger and lemon on the side.",
+        dietary_tags: [halal, spicy], allergens: [gluten], allergens_verified: true }
+    - { id: r5-m6, name: Gulab Jamun, category: Desserts, base_price: 200,
+        description: "Two, warm, heavy with syrup.",
+        dietary_tags: [halal, vegetarian], allergens: [dairy, gluten],
         allergens_verified: true }
-    - { id: r5-m5, name: Heritage Tomato Salad, category: Salad, base_price: 850,
-        description: "Tomatoes, basil oil, aged balsamic.",
-        dietary_tags: [vegan, vegetarian, gluten_free], allergens: [],
+    - { id: r5-m7, name: Gajar Ka Halwa, category: Desserts, base_price: 280,
+        description: "Carrot slow-cooked in milk with cardamom and almond.",
+        dietary_tags: [halal, vegetarian, gluten_free], allergens: [dairy, tree_nut],
         allergens_verified: true }
-    - { id: r5-m6, name: Sourdough and Cultured Butter, category: Sides, base_price: 450,
-        description: "Two-day ferment, salted cultured butter.",
-        dietary_tags: [vegetarian], allergens: [gluten, dairy], allergens_verified: true }
-    - { id: r5-m7, name: Dark Chocolate Mousse, category: Dessert, base_price: 700,
-        description: "Aquafaba mousse, 70% chocolate, olive oil, salt.",
-        dietary_tags: [vegan, vegetarian, gluten_free], allergens: [soy],
-        allergens_verified: true }
-    - { id: r5-m8, name: Cold Pressed Green Juice, category: Drinks, base_price: 500,
-        description: "Cucumber, apple, celery, ginger, lime.",
-        dietary_tags: [vegan, vegetarian, gluten_free], allergens: [],
+    - { id: r5-m8, name: Lassi, category: Drinks, base_price: 230,
+        description: "Churned yoghurt, sweet or salted, served cold.",
+        dietary_tags: [halal, vegetarian, gluten_free], allergens: [dairy],
         allergens_verified: true }

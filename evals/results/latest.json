@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-09-07T11:20:40.376141+00:00",
-  "cases": 29,
-  "passed": 29,
+  "generated_at": "2026-09-07T13:18:48.685171+00:00",
+  "cases": 31,
+  "passed": 31,
   "failed": 0,
   "hard_violations": {
     "A01": 0,
@@ -16,7 +16,7 @@
       "score": 1.0
     },
     "A02": {
-      "cases": 9,
+      "cases": 11,
       "violations": 0,
       "score": 1.0
     },
@@ -26,7 +26,7 @@
       "score": 1.0
     },
     "A04": {
-      "cases": 6,
+      "cases": 7,
       "violations": 0,
       "score": 1.0
     },
@@ -451,6 +451,33 @@
       "kpi": [
         "A02",
         "A08a"
+      ],
+      "violations": [],
+      "failures": []
+    },
+    {
+      "id": "EV-REST-04",
+      "title": "'What's on the menu' reaches for the whole menu, not a sample",
+      "passed": true,
+      "us": [
+        "US-01"
+      ],
+      "kpi": [
+        "A02",
+        "A04"
+      ],
+      "violations": [],
+      "failures": []
+    },
+    {
+      "id": "EV-REST-05",
+      "title": "A browse names dishes from more than one kitchen",
+      "passed": true,
+      "us": [
+        "US-01"
+      ],
+      "kpi": [
+        "A02"
       ],
       "violations": [],
       "failures": []

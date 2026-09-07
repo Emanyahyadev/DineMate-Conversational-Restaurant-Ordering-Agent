@@ -44,10 +44,17 @@ DIETS = {
     "dairy-free": "Eats dairy free",
 }
 
-# "I am allergic to peanuts", "I have a nut allergy", "peanuts bring me out"
+# "I am allergic to peanuts", "allergic to peanuts and shellfish",
+# "I have a nut allergy".
+#
+# The list stops at a clause boundary. Without that, "allergic to peanuts and I
+# am vegetarian" swallowed the second clause and stored the fact
+# "Allergic to I am vegetarian" - a wrong memory, which is worse than none
+# because it silently shapes every later suggestion.
+_ALLERGY_ITEM = r"(?:(?!\b(?:i|we|but|though|so|because|however)\b)[a-z])+"
 _ALLERGY = re.compile(
-    r"\b(?:i(?:'m| am)?\s+)?allergic\s+to\s+([a-z ,and]+)|"
-    r"\bi\s+have\s+an?\s+([a-z ]+?)\s+allergy\b",
+    rf"\ballergic\s+to\s+((?:{_ALLERGY_ITEM}|\s|,|\band\b)+)|"
+    r"\bi\s+have\s+an?\s+([a-z ]+?)\s+allerg(?:y|ies)\b",
     re.I,
 )
 
@@ -79,7 +86,15 @@ MAX_PHRASE = 24
 
 
 def _clean(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip(" .,!").strip()
+    """Normalise whitespace and drop dangling punctuation or conjunctions.
+
+    A clause that stops mid-list leaves "peanuts and"; storing that as the
+    allergen reads badly everywhere it is later shown.
+    """
+    text = re.sub(r"\s+", " ", text).strip(" .,!")
+    text = re.sub(r"^(?:and|or)\s+", "", text, flags=re.I)
+    text = re.sub(r"\s+(?:and|or)$", "", text, flags=re.I)
+    return text.strip()
 
 
 def extract(message: str) -> dict[str, list[dict[str, Any]]]:

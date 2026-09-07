@@ -40,12 +40,12 @@
   seed:
     cart:
       - { item_id: r1-m1, quantity: 1 }
-      - { item_id: r1-m6, quantity: 1 }
+      - { item_id: r1-m5, quantity: 1 }
   turns:
     - user: "that's everything"
       expect:
         tools: [{ name: view_cart }]
-    - user: "actually drop the garlic bread"
+    - user: "actually drop the garlic naan"
       expect:
         not_tools: [confirm_order]
     - user: "yes go ahead"

@@ -181,9 +181,34 @@ async def delete_user(user_id: str) -> None:
     print(f"deleted user {user_id} across both stores")
 
 
+async def make_staff(email: str, restaurant_id: str, password: str) -> None:
+    """Create or promote a kitchen account: python -m app.cli staff <email> <r-id> <pw>"""
+    from app.services import auth_service
+
+    async with SessionLocal() as session:
+        restaurant = await session.get(Restaurant, restaurant_id)
+        if restaurant is None:
+            print(f"no such restaurant: {restaurant_id}")
+            return
+
+        row = await session.execute(select(User).where(User.email == email.lower()))
+        user = row.scalar_one_or_none()
+        if user is None:
+            user = await auth_service.register(
+                session, email=email, password=password, display_name=f"{restaurant.name} kitchen"
+            )
+        user.role = "staff"
+        user.staff_restaurant_id = restaurant.id
+        await session.commit()
+    print(f"{email} is now staff at {restaurant.name} ({restaurant_id})")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
-        print("usage: python -m app.cli [seed-menu|check-invariants|delete-user <id>]")
+        print(
+            "usage: python -m app.cli "
+            "[seed-menu|check-invariants|delete-user <id>|staff <email> <restaurant> <password>]"
+        )
         raise SystemExit(2)
 
     command = sys.argv[1]
@@ -193,6 +218,8 @@ def main() -> None:
         raise SystemExit(1 if asyncio.run(check_invariants()) else 0)
     elif command == "delete-user":
         asyncio.run(delete_user(sys.argv[2]))
+    elif command == "staff":
+        asyncio.run(make_staff(sys.argv[2], sys.argv[3], sys.argv[4]))
     else:
         print(f"unknown command: {command}")
         raise SystemExit(2)
