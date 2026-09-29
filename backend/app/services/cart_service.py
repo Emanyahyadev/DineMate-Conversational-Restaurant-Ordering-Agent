@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import noload, selectinload
 
 from app.config import settings
 from app.db.models import (
@@ -24,11 +24,11 @@ from app.db.models import (
     ConfirmationToken,
     MenuItem,
     MenuOption,
+    Restaurant,
 )
 from app.services import money
 from app.services.errors import (
     InvalidOptions,
-    MixedRestaurants,
     ItemNotFound,
     ItemUnavailable,
     LineNotFound,
@@ -46,7 +46,17 @@ def _options_hash(option_ids: list[str]) -> str:
 
 
 _LOAD_LINES = (
-    selectinload(Cart.lines).selectinload(CartLine.item),
+    # The restaurant name is on every cart line, so it is loaded with the item
+    # rather than by MenuItem.restaurant's own selectin - which would also drag
+    # that restaurant's whole menu back through Restaurant.items. The option
+    # groups are not read here at all; add_line loads the item separately for
+    # its Rule O1 check.
+    selectinload(Cart.lines)
+    .selectinload(CartLine.item)
+    .options(
+        selectinload(MenuItem.restaurant).noload(Restaurant.items),
+        noload(MenuItem.option_groups),
+    ),
     selectinload(Cart.lines).selectinload(CartLine.options).selectinload(
         CartLineOption.option
     ),
@@ -113,8 +123,8 @@ async def serialise(session: AsyncSession, cart: Cart | None) -> dict[str, Any]:
         zero = {
             "id": None,
             "version": 0,
-            "restaurant_id": None,
-            "restaurant_name": None,
+            "restaurants": [],
+            "restaurant_count": 0,
             "lines": [],
             **money.money_fields("subtotal", 0),
             **money.money_fields("tax", 0),
@@ -123,7 +133,7 @@ async def serialise(session: AsyncSession, cart: Cart | None) -> dict[str, Any]:
         return zero
 
     lines: list[dict[str, Any]] = []
-    for line in sorted(cart.lines, key=lambda l: l.created_at or datetime.now(timezone.utc)):
+    for line in sorted(cart.lines, key=lambda ln: ln.created_at or datetime.now(UTC)):
         item = line.item
         opts = [
             {"id": o.option.id, "name": o.option.name, "price_delta_cents": o.option.price_delta}
@@ -148,16 +158,35 @@ async def serialise(session: AsyncSession, cart: Cart | None) -> dict[str, Any]:
 
     sub = money.subtotal([line["line_total_cents"] for line in lines])
     tax = money.tax_for(sub)
+
+    # Grouped for display, and so the customer can see what each kitchen costs
+    # before they commit to a basket that becomes several orders.
+    groups: dict[str, dict[str, Any]] = {}
+    for line in lines:
+        g = groups.setdefault(
+            line["restaurant_id"],
+            {
+                "restaurant_id": line["restaurant_id"],
+                "restaurant_name": line["restaurant_name"],
+                "lines": [],
+                "subtotal_cents": 0,
+            },
+        )
+        g["lines"].append(line)
+        g["subtotal_cents"] += line["line_total_cents"]
+    for g in groups.values():
+        g.update(money.money_fields("subtotal", g["subtotal_cents"]))
+
     return {
         "id": cart.id,
         "version": cart.version,
-        "restaurant_id": cart.restaurant_id,
-        "restaurant_name": lines[0]["restaurant_name"] if lines else None,
+        "restaurants": list(groups.values()),
+        "restaurant_count": len(groups),
         "lines": lines,
         **money.money_fields("subtotal", sub),
         **money.money_fields("tax", tax),
         **money.money_fields("total", money.order_total(sub, tax)),
-        "updated_at": (cart.updated_at or datetime.now(timezone.utc)).isoformat(),
+        "updated_at": (cart.updated_at or datetime.now(UTC)).isoformat(),
     }
 
 
@@ -178,7 +207,14 @@ async def add_line(
     if not 1 <= quantity <= MAX_QUANTITY:
         raise QuantityOutOfRange(f"Quantity must be between 1 and {MAX_QUANTITY}.")
 
-    item = await session.get(MenuItem, item_id.strip())
+    # option_groups is genuinely needed below for Rule O1. The restaurant is
+    # needed for its name when the cart is serialised - but not its menu, which
+    # Restaurant.items would fetch in full behind it.
+    item = await session.get(
+        MenuItem,
+        item_id.strip(),
+        options=(selectinload(MenuItem.restaurant).noload(Restaurant.items),),
+    )
     if item is None or not item.is_active:
         raise ItemNotFound(f"'{item_id}' is not on the menu.")
     if not item.is_available:  # Rule C3
@@ -187,19 +223,8 @@ async def add_line(
     cart = await get_open_cart(session, user_id, lock=True)
     assert cart is not None
 
-    # Rule K1: one order, one kitchen. A cart adopts the restaurant of its first
-    # line and refuses anything from elsewhere - a single order cannot be cooked
-    # in two places.
-    if cart.restaurant_id is None:
-        cart.restaurant_id = item.restaurant_id
-    elif cart.restaurant_id != item.restaurant_id:
-        raise MixedRestaurants(
-            f"{item.name} is from {item.restaurant.name}, and your order is from "
-            "another restaurant. Finish this one first, or clear it to start again.",
-            cart_restaurant_id=cart.restaurant_id,
-            item_restaurant_id=item.restaurant_id,
-        )
-
+    # A basket may span kitchens. Each one still cooks and dispatches on its own
+    # clock, so checkout splits into one order per kitchen (order_service.confirm).
     option_ids = option_ids or []
     options: list[MenuOption] = []
     for oid in option_ids:
@@ -221,7 +246,8 @@ async def add_line(
     ohash = _options_hash(option_ids)
 
     existing = next(
-        (l for l in cart.lines if l.menu_item_id == item.id and l.options_hash == ohash), None
+        (ln for ln in cart.lines if ln.menu_item_id == item.id and ln.options_hash == ohash),
+        None,
     )
     if existing is not None:  # Rule C1 - merge
         new_qty = existing.quantity + quantity
@@ -257,15 +283,12 @@ async def update_line(
     cart = await get_open_cart(session, user_id, create=False, lock=True)
     if cart is None:
         raise LineNotFound()
-    line = next((l for l in cart.lines if l.id == line_id), None)
+    line = next((ln for ln in cart.lines if ln.id == line_id), None)
     if line is None:
         raise LineNotFound()
 
     if quantity == 0:
         await session.delete(line)
-        await session.flush()
-        if not [l for l in cart.lines if l.id != line_id]:
-            cart.restaurant_id = None
     else:
         line.quantity = quantity
 
@@ -283,7 +306,6 @@ async def clear(session: AsyncSession, user_id: str) -> dict[str, Any]:
         return await serialise(session, None)
     for line in list(cart.lines):
         await session.delete(line)
-    cart.restaurant_id = None
     await _bump_version(session, cart)
     return await serialise(session, await reload(session, cart))
 
@@ -309,7 +331,7 @@ async def issue_confirmation_token(
             user_id=user_id,
             cart_version=cart.version,
             issued_turn=turn_id,
-            expires_at=datetime.now(timezone.utc)
+            expires_at=datetime.now(UTC)
             + timedelta(seconds=settings.confirmation_token_ttl_seconds),
         )
     )
@@ -347,7 +369,7 @@ async def latest_valid_token(
             ConfirmationToken.cart_id == cart_id,
             ConfirmationToken.cart_version == cart_version,
             ConfirmationToken.consumed_at.is_(None),
-            ConfirmationToken.expires_at > datetime.now(timezone.utc),
+            ConfirmationToken.expires_at > datetime.now(UTC),
         )
         .order_by(ConfirmationToken.created_at.desc())
     )

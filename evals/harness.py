@@ -163,14 +163,21 @@ async def _seed(case: dict[str, Any]) -> str:
         async with SessionLocal() as s:
             from app.services import order_service
 
-            order = await order_service.confirm(
-                s, user_id, confirmation_token=token, idempotency_key=f"seed-{user_id}"
+            # confirm() returns one order per kitchen; a seeded fixture is a
+            # single kitchen, but the loop keeps it honest either way.
+            orders = await order_service.confirm(
+                s,
+                user_id,
+                confirmation_token=token,
+                contact_phone="03001234567",
+                idempotency_key=f"seed-{user_id}",
             )
             if spec.get("status") and spec["status"] != "confirmed":
-                row = await s.get(Order, order["id"])
-                await order_service.transition(
-                    s, row, to_status=spec["status"], actor="staff"
-                )
+                for created in orders:
+                    row = await s.get(Order, created["id"])
+                    await order_service.transition(
+                        s, row, to_status=spec["status"], actor="staff"
+                    )
             await s.commit()
     return user_id
 
@@ -290,7 +297,11 @@ async def _check_final(case: dict[str, Any], user_id: str) -> tuple[list[str], s
             violations.add("A05")
 
     if "orders_created" in expect:
-        created = [o for o in orders if o.idempotency_key != f"seed-{user_id}"]
+        created = [
+            o
+            for o in orders
+            if not (o.idempotency_key or "").startswith(f"seed-{user_id}")
+        ]
         if len(created) != expect["orders_created"]:
             failures.append(
                 f"expected {expect['orders_created']} new order(s), got {len(created)}"

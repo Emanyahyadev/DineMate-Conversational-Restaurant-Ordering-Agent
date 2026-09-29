@@ -36,7 +36,7 @@ async def test_cart_flow(client):
 async def test_confirm_requires_token(client):
     c = await register_and_login(client, "notoken@dinemate.example")
     await c.post("/api/cart/lines", json={"item_id": "r1-m1", "quantity": 1})
-    r = await c.post("/api/orders", json={"confirmation_token": "made-up"})
+    r = await c.post("/api/orders", json={"confirmation_token": "made-up", "contact_phone": "03001234567"})
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "NO_CONFIRMATION"
 
@@ -52,7 +52,7 @@ async def test_full_order(client):
 
     r = await c.post(
         "/api/orders",
-        json={"confirmation_token": token, "fulfilment": "pickup"},
+        json={"confirmation_token": token, "fulfilment": "pickup", "contact_phone": "03001234567"},
         headers={"Idempotency-Key": "test-key-1"},
     )
     assert r.status_code == 201, r.text

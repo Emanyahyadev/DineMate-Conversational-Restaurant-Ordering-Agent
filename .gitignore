@@ -1,18 +1,55 @@
-# python
-backend/.venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+.venv/
+backend/.venv/
+env/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# node
+# Node & Next.js
+node_modules/
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+frontend/build/
+.next/
+out/
+*.tsbuildinfo
+.vercel/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
 
-# env
+# Environment & Secrets
 .env
 .env.local
-.env*.local
-
-# supplied credential files
+.env.*.local
+*.env
+!*.env.example
+!backend/.env.example
+!frontend/.env.example
 atlas-credentials.env
 *credentials*.env
+
+# Operating System & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+

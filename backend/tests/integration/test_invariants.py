@@ -55,7 +55,7 @@ async def test_inv4_total_consistency_enforced(client):
     c, _ = await _user(client, "inv4@dinemate.example")
     await c.post("/api/cart/lines", json={"item_id": "r1-m1", "quantity": 2})
     token = (await c.get("/api/cart")).json()["confirmation_token"]
-    await c.post("/api/orders", json={"confirmation_token": token},
+    await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                  headers={"Idempotency-Key": "inv4"})
     async with SessionLocal() as s:
         with pytest.raises((IntegrityError, DBAPIError)):
@@ -67,7 +67,7 @@ async def test_inv4_line_total_consistency_enforced(client):
     c, _ = await _user(client, "inv4b@dinemate.example")
     await c.post("/api/cart/lines", json={"item_id": "r1-m1", "quantity": 2})
     token = (await c.get("/api/cart")).json()["confirmation_token"]
-    await c.post("/api/orders", json={"confirmation_token": token},
+    await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                  headers={"Idempotency-Key": "inv4b"})
     async with SessionLocal() as s:
         with pytest.raises((IntegrityError, DBAPIError)):
@@ -79,7 +79,7 @@ async def test_inv5_and_inv6_order_has_lines_and_events(client):
     c, _ = await _user(client, "inv56@dinemate.example")
     await c.post("/api/cart/lines", json={"item_id": "r1-m1", "quantity": 1})
     token = (await c.get("/api/cart")).json()["confirmation_token"]
-    await c.post("/api/orders", json={"confirmation_token": token},
+    await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                  headers={"Idempotency-Key": "inv56"})
     async with SessionLocal() as s:
         order = (await s.execute(select(Order))).scalar_one()
@@ -99,7 +99,7 @@ async def test_confirm_is_atomic_on_failure(client):
         await s.execute(text("UPDATE menu_items SET is_available = false WHERE id = 'r1-m1'"))
         await s.commit()
     try:
-        r = await c.post("/api/orders", json={"confirmation_token": token},
+        r = await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                          headers={"Idempotency-Key": "atomic"})
         assert r.status_code == 409
         assert r.json()["error"]["code"] == "ITEM_UNAVAILABLE"
@@ -117,7 +117,7 @@ async def test_inv8_no_order_without_consumed_token(client):
     c, _ = await _user(client, "inv8@dinemate.example")
     await c.post("/api/cart/lines", json={"item_id": "r1-m1", "quantity": 1})
     token = (await c.get("/api/cart")).json()["confirmation_token"]
-    await c.post("/api/orders", json={"confirmation_token": token},
+    await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                  headers={"Idempotency-Key": "inv8"})
     from app.cli import check_invariants
     assert await check_invariants() == 0

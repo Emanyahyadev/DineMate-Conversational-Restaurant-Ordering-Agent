@@ -33,6 +33,9 @@ function Memories() {
   }, []);
 
   useEffect(() => {
+    // Not a synchronous setState: each of these awaits its request first.
+    // The lint rule cannot see through the async boundary.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 

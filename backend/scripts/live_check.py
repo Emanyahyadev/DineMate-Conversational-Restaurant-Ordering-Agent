@@ -1,10 +1,15 @@
-import asyncio, time, uuid, sys
-import sys, pathlib; sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+import asyncio
+import time
+import uuid
+import sys
+import pathlib; sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from agents import Runner
+
 from app.agent.context import ChatContext
 from app.agent.runtime import build_agent
 from app.db.models import User
 from app.db.postgres import SessionLocal
+
 
 async def turn(uid, history, msg):
     async with SessionLocal() as s:
@@ -35,6 +40,7 @@ async def main():
                 "yes, place the order"]:
         h = await turn(uid, h, msg)
     from sqlalchemy import select
+
     from app.db.models import Order
     async with SessionLocal() as s:
         rows = await s.execute(select(Order).where(Order.user_id == uid))

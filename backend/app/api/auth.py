@@ -13,6 +13,7 @@ from app.api.deps import (
     clear_auth_cookies,
     current_user_id,
     get_db,
+    get_read_db,
     set_auth_cookies,
 )
 from app.db.models import User
@@ -126,7 +127,7 @@ async def logout_all(
 
 @router.get("/me")
 async def me(
-    user_id: str = Depends(current_user_id), session: AsyncSession = Depends(get_db)
+    user_id: str = Depends(current_user_id), session: AsyncSession = Depends(get_read_db)
 ) -> dict:
     user = await session.get(User, user_id)
     if user is None or user.status != "active":

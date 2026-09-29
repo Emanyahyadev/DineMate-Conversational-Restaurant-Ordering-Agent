@@ -13,7 +13,7 @@ from typing import Any
 from agents import RunContextWrapper, function_tool
 
 from app.agent.context import ChatContext
-from app.services import cart_service, memory_service, menu_service, order_service
+from app.services import cart_service, memory_service, menu_service, money, order_service
 from app.services.errors import DomainError, NoConfirmation, OrderNotFound
 
 
@@ -84,8 +84,10 @@ async def search_menu(
     about what is available.
 
     Args:
-        query: Free text, e.g. 'something spicy' or 'pizza'.
-        category: One of Starters, Pizza, Pasta, Salad, Sides, Dessert, Drinks.
+        query: Free text, e.g. 'something spicy' or 'chicken karahi'.
+        category: One of Starters, BBQ, Karahi & Curries, Biryani & Rice, Breads,
+            Sides, Desserts, Drinks. Leave it out unless the customer asked for a
+            whole course; `query` alone searches every category.
         restaurant_id: Restrict to one restaurant, e.g. 'r2'. Use list_restaurants first.
         dietary_tags: Restrict to vegetarian, vegan, gluten_free, halal or spicy.
         exclude_allergens: Leave out dishes containing these allergens.
@@ -205,7 +207,12 @@ async def add_to_cart(
         result = _err(exc)
     c.record(
         "add_to_cart",
-        {"item_id": item_id, "quantity": quantity, "option_ids": _as_list(option_ids) or [], "note": note},
+        {
+            "item_id": item_id,
+            "quantity": quantity,
+            "option_ids": _as_list(option_ids) or [],
+            "note": note,
+        },
         result,
     )
     return result
@@ -259,6 +266,11 @@ async def view_cart(ctx: RunContextWrapper[ChatContext]) -> dict[str, Any]:
     result = await cart_service.view(c.session, c.user_id)
     c.cart_snapshot = result
 
+    # What we already hold for this customer, so the read-back can offer it back
+    # ("still 0300..., House 12?") instead of asking for details they have
+    # already given us once. It is their own data being shown to them.
+    result["on_file"] = await order_service.contact_on_file(c.session, c.user_id)
+
     # Issuing the confirmation token is the read-back's side effect. The token is
     # kept server-side; the model never sees it (ADR-0004).
     if result["lines"]:
@@ -276,13 +288,22 @@ async def view_cart(ctx: RunContextWrapper[ChatContext]) -> dict[str, Any]:
 # -------------------------------------------------------------------- orders
 @function_tool
 async def confirm_order(
-    ctx: RunContextWrapper[ChatContext], fulfilment: str = "pickup", notes: str = ""
+    ctx: RunContextWrapper[ChatContext],
+    fulfilment: str = "pickup",
+    contact_phone: str = "",
+    delivery_address: str = "",
+    notes: str = "",
 ) -> dict[str, Any]:
     """Place the order. Only call this immediately after you read the order back and
     the customer agreed in their last message.
 
+    A basket spanning several restaurants becomes one order per restaurant, so
+    this can return more than one order id. Read them all back.
+
     Args:
         fulfilment: 'pickup' or 'delivery'.
+        contact_phone: Their phone number. Required. Ask if you do not have it.
+        delivery_address: Where to deliver. Required when fulfilment is delivery.
         notes: Any instruction for the whole order.
     """
     c = ctx.context
@@ -296,19 +317,34 @@ async def confirm_order(
             raise NoConfirmation(
                 "Read the order back to the customer and wait for them to agree first."
             )
-        result = await order_service.confirm(
+        orders = await order_service.confirm(
             c.session,
             c.user_id,
             confirmation_token=token,
             fulfilment=fulfilment,
             notes=notes,
+            contact_phone=_as_text(contact_phone) or "",
+            delivery_address=_as_text(delivery_address) or "",
             idempotency_key=f"turn-{c.turn_id}",
         )
+        # One order per kitchen. Told plainly so the agent reports every id
+        # rather than mentioning one and leaving the rest a surprise.
+        result = {
+            "orders": orders,
+            "order_count": len(orders),
+            "combined_total_display": money.display(
+                sum(o["total_cents"] for o in orders)
+            ),
+        }
         c.confirmation_token = None
         c.cart_snapshot = await cart_service.view(c.session, c.user_id)
     except DomainError as exc:
         result = _err(exc)
-    c.record("confirm_order", {"fulfilment": fulfilment, "notes": notes}, result)
+    c.record(
+        "confirm_order",
+        {"fulfilment": fulfilment, "notes": notes, "has_phone": bool(contact_phone)},
+        result,
+    )
     return result
 
 

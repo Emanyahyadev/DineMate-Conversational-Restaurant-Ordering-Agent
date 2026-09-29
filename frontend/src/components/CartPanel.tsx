@@ -27,21 +27,21 @@ export default function CartPanel({
   onPlace: () => void;
 }) {
   const lines = cart?.lines ?? [];
+  const groups = cart?.restaurants ?? [];
 
   return (
     // Sizes to its contents rather than stretching: the list caps itself and
     // scrolls, so the summary and the Place order button are always in view.
     <div className="flex max-h-full flex-col">
       <div className="shrink-0 border-b border-line px-4 py-3.5">
-        <h2 className="text-[15px] font-semibold tracking-tight text-ink">
-          {cart?.restaurant_name ?? "Your order"}
-        </h2>
+        <h2 className="text-[15px] font-semibold tracking-tight text-ink">Your order</h2>
         <p className="text-[13px] text-ink-muted">
           {lines.length === 0
             ? "Nothing yet"
             : `${lines.reduce((n, l) => n + l.quantity, 0)} item${
                 lines.reduce((n, l) => n + l.quantity, 0) === 1 ? "" : "s"
-              }`}
+              }` +
+              (groups.length > 1 ? ` from ${groups.length} kitchens` : "")}
         </p>
       </div>
 
@@ -55,10 +55,23 @@ export default function CartPanel({
             Nothing yet. Ask DineMate what is good, or tap a dish.
           </p>
         ) : (
-          <ul className="flex flex-col gap-3">
-            {/* Name gets its own row: sharing one row with the stepper and the
-                line total truncated dish names down to "Margh...". */}
-            {lines.map((line) => (
+          <div className="flex flex-col gap-3">
+            {groups.map((group) => (
+              <section key={group.restaurant_id}>
+                {groups.length > 1 && (
+                  <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                    <h3 className="text-[12.5px] font-semibold uppercase tracking-wide text-ink-muted">
+                      {group.restaurant_name}
+                    </h3>
+                    <span className="text-[12.5px] tabular-nums text-ink-muted">
+                      {group.subtotal_display}
+                    </span>
+                  </div>
+                )}
+                <ul className="flex flex-col gap-3">
+                  {/* Name gets its own row: sharing one row with the stepper and
+                      the line total truncated dish names down to "Margh...". */}
+                  {group.lines.map((line) => (
               <li key={line.line_id} className="flex flex-col gap-1">
                 <div className="flex items-baseline justify-between gap-2">
                   <p className="min-w-0 flex-1 text-[14px] font-medium text-ink">
@@ -113,8 +126,11 @@ export default function CartPanel({
                   </button>
                 </div>
               </li>
+                  ))}
+                </ul>
+              </section>
             ))}
-          </ul>
+          </div>
         )}
       </div>
 
@@ -144,9 +160,11 @@ export default function CartPanel({
             {busy ? "Placing…" : `Place order — ${cart.total_display}`}
           </button>
           <p className="mt-2 text-center text-[12.5px] leading-snug text-ink-muted">
-            {canPlace
-              ? "Pay on collection. You can cancel within 10 minutes."
-              : "Review your order with DineMate first, then this unlocks."}
+            {!canPlace
+              ? "Review your order with DineMate first, then this unlocks."
+              : groups.length > 1
+                ? `Placed as ${groups.length} orders, one per kitchen. Pay on collection.`
+                : "Pay on collection. You can cancel within 10 minutes."}
           </p>
         </div>
       )}

@@ -53,6 +53,19 @@ export type CartLine = {
   line_total_display: string;
 };
 
+/** What this restaurant's own customers scored it. `average` is null until
+ *  somebody has actually rated a completed order there. */
+export type RatingSummary = { average: number | null; count: number };
+
+export type Rating = {
+  id: string;
+  order_id: string;
+  stars: number;
+  comment: string;
+  customer: string | null;
+  created_at: string | null;
+};
+
 export type Restaurant = {
   id: string;
   name: string;
@@ -61,13 +74,23 @@ export type Restaurant = {
   item_count: number;
   categories: string[];
   dietary_tags: string[];
+  rating: RatingSummary;
+};
+
+export type CartGroup = {
+  restaurant_id: string;
+  restaurant_name: string;
+  lines: CartLine[];
+  subtotal_cents: number;
+  subtotal_display: string;
 };
 
 export type Cart = {
   id: string | null;
   version: number;
-  restaurant_id: string | null;
-  restaurant_name: string | null;
+  /** A basket may span kitchens; each becomes its own order at checkout. */
+  restaurants: CartGroup[];
+  restaurant_count: number;
   lines: CartLine[];
   subtotal_cents: number;
   subtotal_display: string;
@@ -87,6 +110,10 @@ export type OrderLine = {
 
 export type Order = {
   id: string;
+  /** Shared by every order from one checkout. */
+  order_group_id: string | null;
+  contact_phone: string;
+  delivery_address: string;
   restaurant_id: string | null;
   restaurant_name: string;
   status: string;
@@ -106,6 +133,10 @@ export type Order = {
     actor: string;
     created_at: string;
   }[];
+  /** Present once the customer has rated this order. */
+  rating?: Rating | null;
+  /** Completed, and not yet rated. */
+  can_rate?: boolean;
 };
 
 export type Memory = {
@@ -217,26 +248,22 @@ export const me = () => request<{ user: User }>("/api/auth/me");
 
 /* ------------------------------------------------------------------ menu */
 
-export async function fetchMenu(): Promise<MenuItem[]> {
-  // /api/menu is tuned for agent search and caps a response at 10 items, so a
-  // full browse pages. Paging by RESTAURANT, not category: a category like
-  // Starters now spans five kitchens and sits on the cap, which would silently
-  // drop dishes. No restaurant has more than 10 items.
-  const { items: restaurants } = await listRestaurants();
-  const pages = await Promise.all(
-    restaurants.map((r) =>
-      request<MenuResponse>(`/api/menu?restaurant_id=${encodeURIComponent(r.id)}`),
-    ),
-  );
+export type MenuBoard = {
+  items: MenuItem[];
+  categories: string[];
+  restaurants: Restaurant[];
+};
 
-  const rank = new Map(restaurants.map((r, i) => [r.id, i]));
-  const byId = new Map<string, MenuItem>();
-  for (const page of pages) for (const i of page.items) byId.set(i.id, i);
-
-  return [...byId.values()].sort(
-    (a, b) => (rank.get(a.restaurant_id) ?? 99) - (rank.get(b.restaurant_id) ?? 99),
-  );
-}
+/**
+ * The whole browse surface in one request.
+ *
+ * This used to fetch the restaurant list, then one capped page of /api/menu per
+ * restaurant, then the list again for the ratings - seven serial-ish round
+ * trips before the first dish appeared, because /api/menu is sized for the
+ * agent rather than for a human scrolling a menu. /api/menu/full is served from
+ * the same cache the agent reads and answers all of it at once.
+ */
+export const fetchMenuBoard = () => request<MenuBoard>("/api/menu/full");
 
 /* ------------------------------------------------------------------ cart */
 
@@ -275,9 +302,20 @@ export type KitchenStats = {
 export type KitchenMenuItem = {
   id: string;
   name: string;
+  description: string;
   category: string;
+  dietary_tags: string[];
   is_available: boolean;
   price_display: string;
+  price_cents: number;
+};
+
+export type NewDish = {
+  name: string;
+  category: string;
+  price: string;
+  description?: string;
+  dietary_tags?: string[];
 };
 
 export const kitchenMe = () =>
@@ -292,14 +330,38 @@ export const kitchenOrders = () =>
 export const kitchenHistory = () =>
   request<{ items: Order[] }>("/api/kitchen/orders/history");
 
+/** Answers with the moved ticket in board shape, so the row can be swapped in
+ *  place rather than the whole queue re-read. */
 export const advanceOrder = (id: string, to_status: string) =>
-  request<{ order: Order }>(`/api/kitchen/orders/${id}/advance`, {
+  request<{ order: KitchenOrder }>(`/api/kitchen/orders/${id}/advance`, {
     method: "POST",
     body: JSON.stringify({ to_status, reason: "" }),
   });
 
 export const kitchenMenu = () =>
   request<{ items: KitchenMenuItem[] }>("/api/kitchen/menu");
+
+export const addDish = (dish: NewDish) =>
+  request<{ item: KitchenMenuItem }>("/api/kitchen/menu", {
+    method: "POST",
+    body: JSON.stringify(dish),
+  });
+
+export const menuCategories = () =>
+  request<{ items: string[]; dietary_tags: string[] }>("/api/kitchen/menu/categories");
+
+export const kitchenRatings = () =>
+  request<{
+    summary: RatingSummary;
+    distribution: Record<string, number>;
+    recent: Rating[];
+  }>("/api/kitchen/ratings");
+
+export const rateOrder = (orderId: string, stars: number, comment: string) =>
+  request<{ rating: Rating }>(`/api/orders/${orderId}/rating`, {
+    method: "POST",
+    body: JSON.stringify({ stars, comment }),
+  });
 
 export const setItemAvailability = (id: string, is_available: boolean) =>
   request<{ item: KitchenMenuItem }>(`/api/kitchen/menu/${id}`, {
@@ -326,8 +388,15 @@ export const deleteConversation = (id: string) =>
 export const listRestaurants = () =>
   request<{ items: Restaurant[] }>("/api/restaurants");
 
-export const getCart = () =>
-  request<{ cart: Cart; confirmation_token: string | null }>("/api/cart");
+export type CartResponse = {
+  cart: Cart;
+  confirmation_token: string | null;
+  /** Saved from the last order, so a returning customer is not asked twice. */
+  contact: { phone: string; address: string };
+  delivery_fee_display: string;
+};
+
+export const getCart = () => request<CartResponse>("/api/cart");
 
 export const addToCart = (item_id: string, quantity = 1) =>
   request<{ cart: Cart }>("/api/cart/lines", {
@@ -345,12 +414,19 @@ export const clearCart = () => request<{ cart: Cart }>("/api/cart", { method: "D
 
 /* ---------------------------------------------------------------- orders */
 
-export const placeOrder = (confirmation_token: string, fulfilment = "pickup") =>
-  request<{ order: Order }>("/api/orders", {
+export type Checkout = {
+  fulfilment: "pickup" | "delivery";
+  contact_phone: string;
+  delivery_address: string;
+  notes: string;
+};
+
+export const placeOrder = (confirmation_token: string, checkout: Checkout) =>
+  request<{ orders: Order[]; order: Order }>("/api/orders", {
     method: "POST",
     // Idempotency-Key is what makes a retried confirm safe to send (KPI R05).
     headers: { "Idempotency-Key": crypto.randomUUID() },
-    body: JSON.stringify({ confirmation_token, fulfilment, notes: "" }),
+    body: JSON.stringify({ confirmation_token, ...checkout }),
   });
 
 export const listOrders = () => request<{ items: Order[] }>("/api/orders");

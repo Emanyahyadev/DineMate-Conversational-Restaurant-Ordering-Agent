@@ -8,19 +8,29 @@ accidentally return another kitchen's work.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import noload
 
 from app.db.models import MenuItem, Order, OrderLine, Restaurant, User
 from app.services import menu_service, money, order_service
-from app.services.errors import NotFound, Unauthenticated
+from app.services.errors import Conflict, NotFound, Unauthenticated, ValidationError
 
 # What the kitchen is working on right now, in the order it needs attention.
 LIVE_STATUSES = ["confirmed", "preparing", "ready", "out_for_delivery"]
 QUEUE_ORDER = {s: i for i, s in enumerate(LIVE_STATUSES)}
+
+#: A dish and nothing hanging off it. MenuItem.restaurant and
+#: MenuItem.option_groups are both selectin by default, and the restaurant then
+#: pulls its entire menu back through Restaurant.items - so reading this
+#: kitchen's board costs four statements instead of one. None of it is used by
+#: _serialise_item, and on a database in another region each statement is a
+#: round trip somebody is waiting on.
+_JUST_THE_DISH = (noload(MenuItem.restaurant), noload(MenuItem.option_groups))
 
 
 async def require_staff(session: AsyncSession, user_id: str) -> User:
@@ -35,10 +45,33 @@ async def require_staff(session: AsyncSession, user_id: str) -> User:
 
 
 async def restaurant_for(session: AsyncSession, user: User) -> Restaurant:
-    restaurant = await session.get(Restaurant, user.staff_restaurant_id)
+    # Only the name and cuisine are wanted. Restaurant.items is selectin, so
+    # without this the header of the dashboard fetches the entire menu, every
+    # dish's option groups and every group's options - four statements to read
+    # two strings, and the slowest call on the whole page.
+    restaurant = await session.get(
+        Restaurant, user.staff_restaurant_id, options=(noload(Restaurant.items),)
+    )
     if restaurant is None:
         raise NotFound()
     return restaurant
+
+
+def _ticket(
+    order: Order, now: datetime, *, include_events: bool = False
+) -> dict[str, Any]:
+    """One order as the pass sees it: how long it has waited, and where next.
+
+    Shared by `queue` and `advance` so a board that has just moved a ticket can
+    swap that one row for the response, rather than re-reading the whole shift.
+    """
+    data = order_service.serialise(order, include_events=include_events)
+    waited = now - order.confirmed_at
+    data["waiting_minutes"] = int(waited.total_seconds() // 60)
+    # A ticket that has sat past this is the one to look at first.
+    data["is_late"] = waited > timedelta(minutes=25)
+    data["next_statuses"] = sorted(order_service.TRANSITIONS.get(order.status, set()))
+    return data
 
 
 async def queue(session: AsyncSession, restaurant_id: str) -> list[dict[str, Any]]:
@@ -46,21 +79,15 @@ async def queue(session: AsyncSession, restaurant_id: str) -> list[dict[str, Any
     rows = await session.execute(
         select(Order)
         .where(Order.restaurant_id == restaurant_id, Order.status.in_(LIVE_STATUSES))
+        # Order.events is selectin-loaded by default; the board never shows an
+        # audit trail, so that is a whole extra query on every 10-second poll.
+        .options(noload(Order.events))
         .order_by(Order.confirmed_at)
     )
     orders = sorted(rows.scalars(), key=lambda o: (QUEUE_ORDER.get(o.status, 9), o.confirmed_at))
 
-    now = datetime.now(timezone.utc)
-    out = []
-    for order in orders:
-        data = order_service.serialise(order)
-        waited = now - order.confirmed_at
-        data["waiting_minutes"] = int(waited.total_seconds() // 60)
-        # A ticket that has sat past this is the one to look at first.
-        data["is_late"] = waited > timedelta(minutes=25)
-        data["next_statuses"] = sorted(order_service.TRANSITIONS.get(order.status, set()))
-        out.append(data)
-    return out
+    now = datetime.now(UTC)
+    return [_ticket(order, now) for order in orders]
 
 
 async def history(
@@ -80,35 +107,33 @@ async def history(
 
 async def stats(session: AsyncSession, restaurant_id: str) -> dict[str, Any]:
     """Today's numbers. Money stays in minor units until it is displayed."""
-    midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    midnight = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
 
+    # Placed, taken and cancelled in one pass over today's rows. Three separate
+    # aggregates over the same window cost three round trips to a remote
+    # Postgres, which is the whole of the dashboard's first-load delay.
+    live_order = Order.status != "cancelled"
     row = await session.execute(
         select(
-            func.count(Order.id),
-            func.coalesce(func.sum(Order.total), 0),
+            func.coalesce(func.sum(case((live_order, 1), else_=0)), 0),
+            func.coalesce(func.sum(case((live_order, Order.total), else_=0)), 0),
+            func.coalesce(func.sum(case((Order.status == "cancelled", 1), else_=0)), 0),
         ).where(
             Order.restaurant_id == restaurant_id,
             Order.confirmed_at >= midnight,
-            Order.status != "cancelled",
         )
     )
-    count, revenue = row.one()
-
-    cancelled = await session.execute(
-        select(func.count(Order.id)).where(
-            Order.restaurant_id == restaurant_id,
-            Order.confirmed_at >= midnight,
-            Order.status == "cancelled",
-        )
-    )
+    count, revenue, cancelled = row.one()
 
     live = await session.execute(
         select(Order.status, func.count(Order.id))
         .where(Order.restaurant_id == restaurant_id, Order.status.in_(LIVE_STATUSES))
         .group_by(Order.status)
     )
-    by_status = {s: 0 for s in LIVE_STATUSES}
-    by_status.update({s: n for s, n in live})
+    by_status = dict.fromkeys(LIVE_STATUSES, 0)
+    # `live` is a Result, not a mapping: .all() gives the (status, count) rows,
+    # which update() takes directly as key/value pairs.
+    by_status.update(live.all())
 
     top = await session.execute(
         select(OrderLine.item_name, func.sum(OrderLine.quantity).label("n"))
@@ -124,8 +149,8 @@ async def stats(session: AsyncSession, restaurant_id: str) -> dict[str, Any]:
     )
 
     return {
-        "orders_today": count or 0,
-        "cancelled_today": cancelled.scalar() or 0,
+        "orders_today": int(count or 0),
+        "cancelled_today": int(cancelled or 0),
         **money.money_fields("revenue_today", int(revenue or 0)),
         "live_by_status": by_status,
         "top_items": [{"name": name, "quantity": int(n)} for name, n in top],
@@ -153,26 +178,106 @@ async def advance(
     order = await order_service.transition(
         session, order, to_status=to_status, actor="staff", reason=reason[:200]
     )
-    return order_service.serialise(order, include_events=True)
+    return _ticket(order, datetime.now(UTC), include_events=True)
+
+
+def _serialise_item(item: MenuItem) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "name": item.name,
+        "description": item.description,
+        "category": item.category,
+        "dietary_tags": list(item.dietary_tags),
+        "is_available": item.is_available,
+        **money.money_fields("price", item.base_price),
+    }
 
 
 async def menu_board(session: AsyncSession, restaurant_id: str) -> list[dict[str, Any]]:
     """Every dish this kitchen owns, including the ones currently 86'd."""
     rows = await session.execute(
         select(MenuItem)
+        .options(*_JUST_THE_DISH)
         .where(MenuItem.restaurant_id == restaurant_id, MenuItem.is_active.is_(True))
         .order_by(MenuItem.sort_order, MenuItem.name)
     )
-    return [
-        {
-            "id": i.id,
-            "name": i.name,
-            "category": i.category,
-            "is_available": i.is_available,
-            **money.money_fields("price", i.base_price),
-        }
-        for i in rows.scalars()
-    ]
+    return [_serialise_item(i) for i in rows.scalars()]
+
+
+async def add_dish(
+    session: AsyncSession,
+    restaurant_id: str,
+    *,
+    name: str,
+    category: str,
+    price_minor: int,
+    description: str = "",
+    dietary_tags: list[str] | None = None,
+) -> dict[str, Any]:
+    """Put a new dish on this restaurant's menu.
+
+    `restaurant_id` comes from the signed-in staff account, never from the
+    request, so a restaurant cannot add a dish to somebody else's menu.
+
+    The price arrives already in minor units - the API layer converts once, at
+    the boundary, and nothing downstream ever sees a float (Rule $1).
+    """
+    name = " ".join(name.split())[:120]
+    if not name:
+        raise ValidationError("A dish needs a name.")
+
+    category = category.strip()
+    if category not in menu_service.CATEGORIES:
+        raise ValidationError(
+            "Choose one of: " + ", ".join(menu_service.CATEGORIES) + "."
+        )
+
+    if price_minor <= 0:
+        raise ValidationError("A price has to be more than zero.")
+
+    clash = await session.execute(
+        select(MenuItem)
+        .options(*_JUST_THE_DISH)
+        .where(
+            MenuItem.restaurant_id == restaurant_id,
+            MenuItem.is_active.is_(True),
+            func.lower(MenuItem.name) == name.lower(),
+        )
+    )
+    if clash.scalar_one_or_none() is not None:
+        raise Conflict(f"{name} is already on your menu.")
+
+    tags = [t for t in (dietary_tags or []) if t in menu_service.DIETARY_TAGS]
+
+    # Ids elsewhere are seeded as r1-m1; a generated suffix keeps the shape
+    # while guaranteeing no collision with a future seed.
+    item = MenuItem(
+        id=f"{restaurant_id}-{uuid.uuid4().hex[:8]}",
+        restaurant_id=restaurant_id,
+        name=name,
+        description=" ".join(description.split())[:400],
+        category=category,
+        base_price=price_minor,
+        dietary_tags=tags,
+        allergens=[],
+        # Nobody has checked this dish for allergens yet, and saying otherwise
+        # would be a safety claim we cannot support (Rule M3).
+        allergens_verified=False,
+        is_available=True,
+        is_active=True,
+        sort_order=await _next_sort_order(session, restaurant_id),
+    )
+    session.add(item)
+    await session.flush()
+    menu_service.invalidate_cache()
+    return _serialise_item(item)
+
+
+async def _next_sort_order(session: AsyncSession, restaurant_id: str) -> int:
+    row = await session.execute(
+        select(func.max(MenuItem.sort_order)).where(MenuItem.restaurant_id == restaurant_id)
+    )
+    return int(row.scalar() or 0) + 10
 
 
 async def set_availability(
@@ -183,7 +288,7 @@ async def set_availability(
     The cached menu is invalidated immediately: a dish taken off at the pass
     must stop being offered on the next turn, not up to a minute later.
     """
-    item = await session.get(MenuItem, item_id.strip())
+    item = await session.get(MenuItem, item_id.strip(), options=_JUST_THE_DISH)
     if item is None or item.restaurant_id != restaurant_id:
         raise NotFound("That dish is not on your menu.")
 

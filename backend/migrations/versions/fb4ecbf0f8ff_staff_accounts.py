@@ -9,15 +9,15 @@ Revises: c043c7c324ca
 Create Date: 2026-09-07 18:03:54.145194
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
 revision: str = "fb4ecbf0f8ff"
-down_revision: Union[str, Sequence[str], None] = "c043c7c324ca"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "c043c7c324ca"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 FK = "users_staff_restaurant_id_fkey"
 

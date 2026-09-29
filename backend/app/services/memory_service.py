@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pymongo.errors import PyMongoError
@@ -169,7 +169,7 @@ async def remember(
         for e in list(profile.get("preferences", [])) + list(profile.get("facts", []))
     }
 
-    new_prefs, new_facts, now = [], [], datetime.now(timezone.utc)
+    new_prefs, new_facts, now = [], [], datetime.now(UTC)
     for p in preferences:
         text = str(p.get("text", "")).strip()[:120]
         if not text or p.get("confidence", 0) < floor or is_denied(text):

@@ -38,6 +38,30 @@ function inline(text: string, keyPrefix: string): ReactNode[] {
   return out;
 }
 
+/**
+ * "Doodh Patti Chai – Rs 150" -> ["Doodh Patti Chai", "Rs 150"].
+ *
+ * The prompt asks for dishes in a table and the model often obliges, but not
+ * reliably — it falls back to a dashed list, and a menu reads badly that way.
+ * Rather than depend on the model getting it right, a list whose items are all
+ * "dish — price" is rendered as the table it should have been. Deterministic,
+ * and it costs nothing when the model does produce a table.
+ *
+ * Only the separator before a price is treated as a split point, so a dish with
+ * a hyphen in its name ("Gluten-free Naan – Rs 150") stays intact.
+ */
+const DISH_AND_PRICE = /^(.+?)\s+[–—-]\s+([^\s–—-][^–—]*?[\d][\d,.]*)\s*$/;
+
+function dishRow(item: string): [string, string] | null {
+  const match = DISH_AND_PRICE.exec(item.trim());
+  if (!match) return null;
+  const [, dish, price] = match;
+  // A price has to contain a digit and stay short; this is a menu line, not a
+  // sentence that happens to contain a dash.
+  if (!/\d/.test(price) || price.length > 24 || !dish.trim()) return null;
+  return [dish.trim(), price.trim()];
+}
+
 function isTableRow(line: string): boolean {
   return line.trim().startsWith("|") && line.trim().endsWith("|");
 }
@@ -52,6 +76,44 @@ function cells(line: string): string[] {
     .slice(1, -1)
     .split("|")
     .map((c) => c.trim());
+}
+
+/** Wide tables scroll inside their own box; the page never scrolls sideways. */
+function Table({ header, rows }: { header: string[]; rows: string[][] }) {
+  return (
+    <div className="my-1 -mx-1 overflow-x-auto">
+      <table className="w-full border-collapse text-[13.5px]">
+        <thead>
+          <tr>
+            {header.map((h, n) => (
+              <th
+                key={n}
+                className="border-b border-line px-2 py-1.5 text-left font-semibold"
+              >
+                {inline(h, `h${n}`)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, r) => (
+            <tr key={r}>
+              {row.map((c, n) => (
+                <td
+                  key={n}
+                  className={`border-b border-line/60 px-2 py-1.5 align-top ${
+                    n > 0 ? "tabular-nums whitespace-nowrap" : ""
+                  }`}
+                >
+                  {inline(c, `c${r}-${n}`)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export default function RichText({ text }: { text: string }) {
@@ -73,36 +135,7 @@ export default function RichText({ text }: { text: string }) {
         rows.push(cells(lines[i]));
         i += 1;
       }
-      blocks.push(
-        // Wide tables scroll inside their own box; the page never scrolls sideways.
-        <div key={`t${key++}`} className="my-1 -mx-1 overflow-x-auto">
-          <table className="w-full border-collapse text-[13.5px]">
-            <thead>
-              <tr>
-                {header.map((h, n) => (
-                  <th
-                    key={n}
-                    className="border-b border-line px-2 py-1.5 text-left font-semibold"
-                  >
-                    {inline(h, `h${n}`)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row, r) => (
-                <tr key={r}>
-                  {row.map((c, n) => (
-                    <td key={n} className="border-b border-line/60 px-2 py-1.5 align-top">
-                      {inline(c, `c${r}-${n}`)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>,
-      );
+      blocks.push(<Table key={`t${key++}`} header={header} rows={rows} />);
       continue;
     }
 
@@ -119,6 +152,20 @@ export default function RichText({ text }: { text: string }) {
         items.push((b?.[1] ?? n?.[1] ?? "").trim());
         i += 1;
       }
+      // A list of dishes is a menu; show it as one. Even a single dish, so a
+      // course with one item does not sit as a stray bullet between tables.
+      const dishes = items.map(dishRow);
+      if (!ordered && items.length >= 1 && dishes.every(Boolean)) {
+        blocks.push(
+          <Table
+            key={`t${key++}`}
+            header={["Dish", "Price"]}
+            rows={dishes as [string, string][]}
+          />,
+        );
+        continue;
+      }
+
       const ListTag = ordered ? "ol" : "ul";
       blocks.push(
         <ListTag

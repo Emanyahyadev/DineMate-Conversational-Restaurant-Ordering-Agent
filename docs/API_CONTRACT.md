@@ -146,6 +146,23 @@ returns `NOT_FOUND`.
 Public (no auth). Only `is_active AND is_available` rows. Cached 60 s server-side; `Cache-Control:
 public, max-age=60`.
 
+### `GET /api/menu/full`
+```json
+{ "items": [ /* every offerable dish, same shape as above, uncapped */ ],
+  "categories": ["Starters", "…"],
+  "restaurants": [ { "id": "r1", "name": "…", "cuisine": "…", "item_count": 9,
+    "categories": ["…"], "dietary_tags": ["…"],
+    "rating": { "average": 4.6, "count": 12 } } ] }
+```
+Public (no auth), `Cache-Control: public, max-age=60`, served from the same 60 s cache as
+`GET /api/menu`.
+
+`GET /api/menu` caps its answer because it is sized for the agent's prompt budget; a human
+browsing wants the whole board. This exists so that browse is **one** request rather than one per
+restaurant plus two for the list — the caps are unchanged, and so is what the agent sees.
+
+Declared before `/api/menu/{item_id}` so `full` is not read as an item id.
+
 ### `GET /api/menu/{item_id}`
 Adds `option_groups: [{id, name, min_select, max_select, options:[{id,name,price_delta_cents,
 price_delta_display}]}]`.

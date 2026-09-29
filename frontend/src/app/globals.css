@@ -25,6 +25,40 @@
   --color-accent-soft: #e9eef4;
   --color-danger: #a3241d;
   --color-danger-soft: #fdecea;
+
+  /*
+    Restaurant dashboard palette — additive, and used only by /kitchen.
+
+    The customer surface above is cool paper and navy, tuned for a first-time
+    diner. The dashboard is a workplace: someone looks at it for a whole shift,
+    so it is warm ivory and charcoal, with colour reserved almost entirely for
+    order state. Nothing here overrides a customer token; the two systems sit
+    side by side so neither can drift into the other.
+  */
+  --color-dash-bg: #faf8f5;
+  --color-dash-surface: #ffffff;
+  --color-dash-raised: #f6f3ed;
+  --color-dash-ink: #1c1917;
+  --color-dash-soft: #57534e;
+  --color-dash-muted: #8c8479;
+  --color-dash-line: #ebe6de;
+  --color-dash-line-strong: #dbd4c8;
+  --color-dash-accent: #292524;
+  --color-dash-accent-hover: #14100e;
+  --color-dash-beige: #f1ebe1;
+
+  /* Order state. Low saturation on purpose: legible at a glance across a
+     room, never shouting from a screen someone stares at all day. */
+  --color-dash-new: #6b625a;
+  --color-dash-new-soft: #f1ece4;
+  --color-dash-cooking: #8a6524;
+  --color-dash-cooking-soft: #f8f0e0;
+  --color-dash-ready: #4a6442;
+  --color-dash-ready-soft: #ecf1e9;
+  --color-dash-out: #45596b;
+  --color-dash-out-soft: #ebeff3;
+  --color-dash-danger: #8f3a32;
+  --color-dash-danger-soft: #f8eeeb;
 }
 
 @theme inline {
@@ -40,6 +74,28 @@ body {
 body {
   background-color: var(--color-canvas);
   color: var(--color-ink);
+}
+
+/*
+  Chrome paints its own pale blue over an autofilled field, which undoes the
+  warm neutral surface on the restaurant sign-in and makes the page look like a
+  different product the moment a saved password appears. There is no property to
+  turn that off, so the fill is pushed outside the box with a long inset shadow
+  and the caret and text colour are restored.
+*/
+.dash-field:-webkit-autofill,
+.dash-field:-webkit-autofill:hover,
+.dash-field:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 60px var(--color-dash-bg) inset;
+  box-shadow: 0 0 0 60px var(--color-dash-bg) inset;
+  -webkit-text-fill-color: var(--color-dash-ink);
+  caret-color: var(--color-dash-ink);
+  transition: background-color 100000s ease-in-out 0s;
+}
+
+.dash-field:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 60px var(--color-dash-surface) inset;
+  box-shadow: 0 0 0 60px var(--color-dash-surface) inset;
 }
 
 /* Visible focus for keyboard users on every interactive element. */
@@ -108,3 +164,11 @@ body {
     background-color: var(--color-line);
   }
 }
+
+/* Hide Next.js dev indicator portal for clean screenshots */
+nextjs-portal,
+[data-nextjs-toast],
+[data-nextjs-dialog-overlay] {
+  display: none !important;
+}
+

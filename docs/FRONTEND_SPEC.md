@@ -36,6 +36,18 @@ Server Components by default; `"use client"` only where interaction demands it (
 cart panel, forms). The menu page is statically rendered with a 60 s revalidate — it matches the
 server-side menu cache and is what makes P07 (LCP ≤ 2.0 s) achievable.
 
+### One sign-in, two audiences
+
+Signed out, `/` and `/kitchen` render the same component (`<AuthPanel>`): the logo holding one
+half of the screen, the form the other, and the two audiences as a pair of tabs above it —
+**as a customer** and **as a restaurant**. There is no separate login route and no second design.
+
+The tabs decide only what the form offers: a customer may create an account, a restaurant may not
+(access is arranged by DineMate). They do **not** decide anything about identity. Where somebody
+lands is decided by the `role` on the account the server returns — a customer who picks the
+restaurant tab gets the customer app, a staff account signing in at `/` is sent to `/kitchen`.
+Choosing a tab must never be capable of granting anything.
+
 ---
 
 ## 3. Component tree (chat)
@@ -123,7 +135,7 @@ so the interface responds in < 100 ms regardless of TTFT.
 
 | State | Owner | Notes |
 | --- | --- | --- |
-| Session/user | Server Component + `/auth/me` | Never in localStorage |
+| Session/user | `/auth/me`, mirrored in `sessionStorage` | Never in **local**Storage — see below |
 | Messages | `<ChatSurface>` local | Server-hydrated on load |
 | Streaming buffer | `<ChatSurface>` local | Transient |
 | **Cart** | Server, mirrored from `cart` SSE events and mutation responses | **Never** derived from chat text |
@@ -134,8 +146,15 @@ No global state library. The only genuinely shared state is the cart, and the se
 `cart` events plus full-cart mutation responses keep the mirror truthful without reconciliation
 logic.
 
-**Optimistic updates** apply to cart quantity steppers only (instant feedback, revert on error).
-Never to order placement — an optimistic order is a lie about money.
+**Optimistic updates** apply to cart quantity steppers and the kitchen's dish on/off switch
+(instant feedback, revert on error). Never to order placement — an optimistic order is a lie about
+money.
+
+**The session mirror.** `AuthProvider` keeps the resolved user in `sessionStorage` so a page load
+renders immediately while `/auth/me` confirms in the background. It is a display hint, not a
+credential: identity is still httpOnly cookies, still proved server-side on every request, and a
+`me()` that disagrees drops it. `sessionStorage`, never `localStorage` — a shared device must not
+carry one person's name into the next person's tab.
 
 ---
 
@@ -208,6 +227,20 @@ Targets P07 (LCP ≤ 2.0 s), P08 (INP ≤ 200 ms), P09 (≤ 180 kB first-load JS
 - Streamed text appends to a single text node — no re-render per token.
 - Reserved bubble height and fixed-size skeletons keep CLS ≈ 0.
 - Route-level code splitting; `/chat` does not ship `/orders` code.
+
+**Round-trip budget.** Both databases are remote, so a round trip is the unit that matters, not
+CPU. Three rules, each of which was once broken:
+
+- **A mutation response is the new state.** Every mutating endpoint answers with the whole object
+  it changed, so nothing re-reads the server to find out what it just did. The kitchen board
+  reloaded four endpoints after each button press; the cart stepper re-read `/api/cart` after each
+  tap, with the buttons disabled for the duration.
+- **Poll only what changes.** The dashboard polls its order queue and nothing else — the menu, the
+  ratings and the staff record are fetched once per session. Polling stops while the tab is
+  hidden and refreshes on return.
+- **One screen, one request.** A view that needs several things asks for them in parallel and
+  renders each as it lands; it does not `Promise.all` a fast call behind a slow one, and it does
+  not page a list one item at a time (which is why `/api/menu/full` exists).
 
 ---
 

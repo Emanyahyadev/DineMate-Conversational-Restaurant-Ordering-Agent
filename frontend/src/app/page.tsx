@@ -7,8 +7,11 @@ export default function Home() {
     // A fixed app shell: the thread, cart and menu scroll inside, the page never
     // does. dvh (not vh) so the mobile address bar cannot crop the composer.
     <div className="flex h-[100dvh] flex-col overflow-hidden">
-      <SiteHeader />
+      {/* The header sits INSIDE the gate: signed out, the sign-in panel gets the
+          whole viewport, and its logo is not competing with a second one 68px
+          above it. */}
       <AuthGate>
+        <SiteHeader />
         <Chat />
       </AuthGate>
     </div>

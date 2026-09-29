@@ -18,7 +18,15 @@ from app.config import settings
 _pool_kwargs = (
     {"poolclass": NullPool}
     if settings.testing
-    else {"pool_pre_ping": True, "pool_size": 10, "max_overflow": 20}
+    else {
+        "pool_pre_ping": settings.pg_pool_pre_ping,
+        "pool_size": settings.pg_pool_size,
+        "max_overflow": settings.pg_max_overflow,
+        # Neon suspends an idle compute and PgBouncer recycles server
+        # connections; a pooled connection older than this is likely already
+        # dead on the other end, and pre-ping only discovers that on checkout.
+        "pool_recycle": 300,
+    }
 )
 
 _url = settings.active_postgres_url
@@ -42,6 +50,23 @@ if "-pooler" in _url:
 engine = create_async_engine(_url, connect_args=_connect_args, **_pool_kwargs)
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+# A session for routes that only read.
+#
+# SQLAlchemy opens a transaction on the first statement and closes it on the
+# way out, so an endpoint that runs one SELECT actually costs BEGIN, SELECT,
+# COMMIT - three round trips, of which two buy nothing. Against a managed
+# Postgres in another region that is most of the wall clock: measured at ~0.5 s
+# per round trip on this deployment, a one-query read went from ~1.5 s to ~0.5 s.
+#
+# AUTOCOMMIT means every statement stands alone, which is exactly right for a
+# read and exactly wrong for anything else - a multi-statement write here would
+# have no rollback. Reads only; use SessionLocal for everything that changes.
+ReadSessionLocal = async_sessionmaker(
+    engine.execution_options(isolation_level="AUTOCOMMIT"),
+    expire_on_commit=False,
+    class_=AsyncSession,
+)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

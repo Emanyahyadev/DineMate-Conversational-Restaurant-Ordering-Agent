@@ -12,15 +12,17 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 from agents import Runner
 from agents.exceptions import MaxTurnsExceeded
 from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context import ChatContext
+from app.agent.harmony import strip_control_tokens
 from app.agent.runtime import PROMPT_VERSION, build_agent, memory_extractor
 from app.config import settings
 from app.db.models import Conversation, Message
@@ -43,6 +45,52 @@ TOOL_LABELS = {
 }
 
 MAX_HISTORY_CHARS = 8000  # ~2000 tokens (ARCHITECTURE.md section 4)
+
+# How many times a turn may be re-run after the provider breaks the stream.
+#
+# Two, not one. This endpoint's own harmony parser fails outright on a minority
+# of completions ("unexpected tokens remaining in message header") - nothing we
+# send is wrong and nothing we can clean helps, the response is simply spoiled.
+# A second retry turns most of those into an answer. It is bounded because a
+# customer would rather be told than watch a fourth attempt.
+RETRY_ATTEMPTS = 2
+
+# Tools that change something. A turn that has called one of these can never be
+# retried: running it again would add the dish, or place the order, twice.
+MUTATING_TOOLS = frozenset(
+    {
+        "add_to_cart",
+        "update_cart_item",
+        "remove_from_cart",
+        "clear_cart",
+        "confirm_order",
+        "cancel_order",
+    }
+)
+
+
+def _is_retryable(reply_parts: list[str], *, rolled_back: bool) -> bool:
+    """Whether this turn can safely be run again from the top.
+
+    About consequences, not about which exception it is. Two conditions:
+
+    * **Nothing shown yet.** A retry produces a fresh reply; if part of one has
+      already streamed, the customer would see two answers stitched together.
+    * **The turn's writes are gone.** No service commits - `cart_service` and
+      `order_service` write through the caller's session and the orchestrator is
+      the only thing that commits - so a rolled-back attempt has left nothing
+      behind and a second run cannot add the dish twice. `confirm_order` is
+      further protected by its `turn-{turn_id}` idempotency key, which is stable
+      across attempts, so even a committed order would be returned rather than
+      duplicated.
+
+    This is why a failure *after* add_to_cart is still retryable, which matters:
+    it is the common case, since a multi-dish order spends most of its time
+    mid-way through the adds.
+    """
+    if reply_parts:
+        return False
+    return rolled_back
 
 
 async def ensure_conversation(
@@ -119,106 +167,207 @@ async def run_turn_stream(
             yield _sse("error", {"code": "STORAGE_UNAVAILABLE", "message": str(exc)})
             return
 
-    # A dedicated session for the turn: tools write through it, and it commits once.
-    async with SessionLocal() as session:
-        ctx = ChatContext(user_id=user_id, session=session, turn_id=turn_id)
-        yield _sse("start", {"conversation_id": conv_id, "turn_id": turn_id})
+    yield _sse("start", {"conversation_id": conv_id, "turn_id": turn_id})
 
-        try:
-            agent = build_agent(memory)
-            result = Runner.run_streamed(
-                agent,
-                [*history, {"role": "user", "content": message}],
-                context=ctx,
-                max_turns=settings.max_agent_turns,
-            )
+    # A dedicated session per attempt: tools write through it, and it commits
+    # once. A retry gets a fresh session and a fresh context, so a half-finished
+    # attempt cannot leave anything behind for the next one to trip over.
+    for attempt in range(RETRY_ATTEMPTS + 1):
+        retry = False
+        reply_parts = []
+        async with SessionLocal() as session:
+            ctx = ChatContext(user_id=user_id, session=session, turn_id=turn_id)
 
-            async for event in result.stream_events():
-                if isinstance(event, RawResponsesStreamEvent):
-                    data = event.data
-                    delta = getattr(data, "delta", None)
-                    if getattr(data, "type", "") == "response.output_text.delta" and delta:
-                        if ttft_ms is None:
-                            ttft_ms = (time.perf_counter() - started) * 1000
-                        reply_parts.append(delta)
-                        yield _sse("token", {"delta": delta})
-
-                elif isinstance(event, RunItemStreamEvent):
-                    item = event.item
-                    if event.name == "tool_called":
-                        name = getattr(getattr(item, "raw_item", None), "name", "") or ""
-                        yield _sse(
-                            "tool",
-                            {
-                                "name": name,
-                                "phase": "start",
-                                "label": TOOL_LABELS.get(name, "Working on it"),
-                            },
-                        )
-                    elif event.name == "tool_output":
-                        name = getattr(getattr(item, "raw_item", None), "name", "") or ""
-                        yield _sse("tool", {"name": name, "phase": "end", "label": ""})
-                        if ctx.cart_snapshot is not None:
-                            yield _sse("cart", {"cart": ctx.cart_snapshot})
-
-            final = result.final_output if isinstance(result.final_output, str) else ""
-            if final and not reply_parts:
-                # Non-streaming model (the fake): emit the reply as one chunk.
-                if ttft_ms is None:
-                    ttft_ms = (time.perf_counter() - started) * 1000
-                reply_parts.append(final)
-                yield _sse("token", {"delta": final})
-
-            for u in getattr(result, "raw_responses", []) or []:
-                if getattr(u, "usage", None):
-                    usage["prompt_tokens"] += u.usage.input_tokens or 0
-                    usage["completion_tokens"] += u.usage.output_tokens or 0
-
-            reply = "".join(reply_parts).strip() or (
-                "Sorry, I did not catch that. Could you say it another way?"
-            )
-
-            session.add(Message(conversation_id=conv_id, role="user", content=message))
-            session.add(
-                Message(
-                    conversation_id=conv_id,
-                    role="assistant",
-                    content=reply,
-                    prompt_version=PROMPT_VERSION,
-                    trace_id=turn_id,
+            try:
+                agent = build_agent(memory)
+                result = Runner.run_streamed(
+                    agent,
+                    [*history, {"role": "user", "content": message}],
+                    context=ctx,
+                    max_turns=settings.max_agent_turns,
                 )
-            )
-            await session.commit()
 
-        except MaxTurnsExceeded:
-            # The model went round in circles. Say so rather than leaving the
-            # customer watching a spinner forever (BC-7).
-            await session.commit()
-            logger.warning("agent exceeded %s turns", settings.max_agent_turns)
-            yield _sse(
-                "error",
-                {
-                    "code": "AGENT_STALLED",
-                    "message": (
-                        "Sorry, I got stuck on that one. Could you put it another way? "
-                        "You can also pick a dish from the menu on the right."
-                    ),
-                },
-            )
-            return
+                async for event in result.stream_events():
+                    if isinstance(event, RawResponsesStreamEvent):
+                        data = event.data
+                        delta = getattr(data, "delta", None)
+                        if getattr(data, "type", "") == "response.output_text.delta" and delta:
+                            # Belt and braces with HarmonySafeModel: a control
+                            # token must never reach the chat bubble, whatever
+                            # route the delta arrived by.
+                            delta = strip_control_tokens(delta)
+                            if not delta:
+                                continue
+                            if ttft_ms is None:
+                                ttft_ms = (time.perf_counter() - started) * 1000
+                            reply_parts.append(delta)
+                            yield _sse("token", {"delta": delta})
 
-        except Exception as exc:  # noqa: BLE001 - never fabricate a reply (BC-7)
-            await session.rollback()
-            logger.exception("agent turn failed")
-            yield _sse(
-                "error",
-                {
-                    "code": "LLM_UNAVAILABLE",
-                    "message": "I cannot reach the kitchen's brain right now. Please try again.",
-                    "detail": str(exc)[:200] if not settings.is_production else "",
-                },
-            )
-            return
+                    elif isinstance(event, RunItemStreamEvent):
+                        item = event.item
+                        if event.name == "tool_called":
+                            name = getattr(getattr(item, "raw_item", None), "name", "") or ""
+                            yield _sse(
+                                "tool",
+                                {
+                                    "name": name,
+                                    "phase": "start",
+                                    "label": TOOL_LABELS.get(name, "Working on it"),
+                                },
+                            )
+                        elif event.name == "tool_output":
+                            name = getattr(getattr(item, "raw_item", None), "name", "") or ""
+                            yield _sse("tool", {"name": name, "phase": "end", "label": ""})
+                            if ctx.cart_snapshot is not None:
+                                yield _sse("cart", {"cart": ctx.cart_snapshot})
+
+                final = result.final_output if isinstance(result.final_output, str) else ""
+                if final and not reply_parts:
+                    # Non-streaming model (the fake): emit the reply as one chunk.
+                    if ttft_ms is None:
+                        ttft_ms = (time.perf_counter() - started) * 1000
+                    reply_parts.append(final)
+                    yield _sse("token", {"delta": final})
+
+                for u in getattr(result, "raw_responses", []) or []:
+                    if getattr(u, "usage", None):
+                        usage["prompt_tokens"] += u.usage.input_tokens or 0
+                        usage["completion_tokens"] += u.usage.output_tokens or 0
+
+                # An empty completion is a failed turn even though nothing
+                # raised: this provider sometimes returns tool calls and then no
+                # text at all, which reached the customer as "Sorry, I did not
+                # catch that" over a request that was perfectly clear. Treat it
+                # like a broken stream and run the turn again, under exactly the
+                # same safety rule - only when nothing has been changed for them.
+                empty = not "".join(reply_parts).strip()
+                if (
+                    empty
+                    and attempt < RETRY_ATTEMPTS
+                    and _is_retryable(reply_parts, rolled_back=True)
+                ):
+                    logger.warning(
+                        "empty completion, retrying turn (attempt %s)", attempt + 1
+                    )
+                    await session.rollback()
+                    retry = True
+                    continue
+
+                reply = "".join(reply_parts).strip()
+                if not reply:
+                    # Out of retries with nothing said. What the tools did still
+                    # stands, so say which of the two happened rather than
+                    # blaming the customer's perfectly clear message for both.
+                    changed = any(
+                        call["name"] in MUTATING_TOOLS for call in ctx.tool_calls
+                    )
+                    if changed and ctx.cart_snapshot:
+                        yield _sse("cart", {"cart": ctx.cart_snapshot})
+                        reply = (
+                            "I have updated your order — it is in the panel. "
+                            "Tell me if that is not what you wanted."
+                        )
+                    else:
+                        reply = (
+                            "Sorry, I lost my train of thought there. "
+                            "Could you say that again?"
+                        )
+                    yield _sse("token", {"delta": reply})
+
+                session.add(Message(conversation_id=conv_id, role="user", content=message))
+                session.add(
+                    Message(
+                        conversation_id=conv_id,
+                        role="assistant",
+                        content=reply,
+                        prompt_version=PROMPT_VERSION,
+                        trace_id=turn_id,
+                    )
+                )
+                # The thread is named by what the customer opened with, and stamped
+                # every turn so the sidebar can order by "recently used" rather than
+                # by when the thread happened to be created.
+                #
+                # Written as an UPDATE rather than through `conversation`: that
+                # instance belongs to the context-assembly session above, which has
+                # already closed, so assigning to it would persist nothing.
+                await session.execute(
+                    update(Conversation)
+                    .where(Conversation.id == conv_id)
+                    .values(
+                        title=func.coalesce(Conversation.title, message.strip()[:80]),
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+                await session.commit()
+
+            except MaxTurnsExceeded:
+                # The model ran out of turns. Say so rather than leaving the
+                # customer watching a spinner forever (BC-7).
+                #
+                # Crucially, the work already done still stands: the tools ran
+                # inside this transaction and their effects are real. Reporting a
+                # flat failure over a cart that was correctly filled is a lie the
+                # customer can see through the moment they look at the panel, so
+                # commit and tell them what actually happened.
+                await session.commit()
+                logger.warning("agent exceeded %s turns", settings.max_agent_turns)
+
+                added = [
+                    call for call in ctx.tool_calls if call["name"] in MUTATING_TOOLS
+                ]
+                if added and ctx.cart_snapshot:
+                    yield _sse("cart", {"cart": ctx.cart_snapshot})
+                    message = (
+                        "I took longer than I should have on that one, but your "
+                        "order is updated - have a look at the panel and tell me "
+                        "if it is right."
+                    )
+                else:
+                    message = (
+                        "Sorry, I got stuck on that one. Could you put it another "
+                        "way? You can also pick a dish from the menu on the right."
+                    )
+                yield _sse("error", {"code": "AGENT_STALLED", "message": message})
+                return
+
+            except Exception as exc:
+                await session.rollback()
+                logger.exception("agent turn failed")
+
+                # A provider that breaks the stream part-way is the single most
+                # common failure here, and it is usually transient - the same turn
+                # sent again succeeds. Retrying is only safe when nothing has
+                # happened yet: no text shown to the customer (a retry would
+                # duplicate it) and no tool that changed anything (add_to_cart is
+                # not idempotent, so a retry would order the dish twice).
+                # `session.rollback()` above undid everything this attempt
+                # wrote, which is what makes another run safe.
+                if attempt < RETRY_ATTEMPTS and _is_retryable(
+                    reply_parts, rolled_back=True
+                ):
+                    logger.warning(
+                        "retrying turn after a broken stream (attempt %s): %s",
+                        attempt + 1,
+                        str(exc)[:200],
+                    )
+                    retry = True
+                else:
+                    yield _sse(
+                        "error",
+                        {
+                            "code": "LLM_UNAVAILABLE",
+                            "message": (
+                                "I cannot reach the kitchen's brain right now. "
+                                "Please try again."
+                            ),
+                            "detail": str(exc)[:200] if not settings.is_production else "",
+                        },
+                    )
+                    return
+
+        if not retry:
+            break
 
     # Memory is written BEFORE the terminal event. Anything placed after the
     # final yield of an async generator runs only if the consumer keeps
@@ -232,7 +381,7 @@ async def run_turn_stream(
             memories_written = await memory_service.remember(
                 user_id, rules["preferences"], rules["facts"]
             )
-        except Exception as exc:  # noqa: BLE001 - memory never breaks a chat
+        except Exception as exc:
             logger.info("rule-based memory write skipped: %s", exc)
 
     # The model pass is richer but costs another call, so it stays detached.
@@ -284,13 +433,76 @@ async def _extract_memory_safely(user_id: str, user_message: str, reply: str) ->
                 return
         if not isinstance(raw, dict):
             return
-        await memory_service.remember(
-            user_id, raw.get("preferences", []) or [], raw.get("facts", []) or []
+        preferences = _corroborated(
+            raw.get("preferences", []) or [], user_message, kind="preference"
         )
+        facts = _corroborated(raw.get("facts", []) or [], user_message, kind="fact")
+        await memory_service.remember(user_id, preferences, facts)
     except (RuntimeError, asyncio.CancelledError):
         return  # loop torn down before extraction ran
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.info("model memory extraction skipped: %s", exc)
+
+
+# Memory that constrains what the customer is ever offered again. A wrong entry
+# here is worse than none: it silently removes food from every future
+# suggestion, and the customer is never told why.
+BINDING_WORDS = (
+    "vegetarian",
+    "vegan",
+    "pescatarian",
+    "halal",
+    "kosher",
+    "gluten",
+    "dairy",
+    "allerg",
+    "does not eat",
+    "doesn't eat",
+    "cannot eat",
+    "avoids",
+)
+
+
+def _corroborated(
+    entries: list[dict[str, Any]], message: str, *, kind: str
+) -> list[dict[str, Any]]:
+    """Drop model-extracted memories that bind future behaviour but were never
+    actually declared.
+
+    The model infers a standing diet from a passing request: "show me something
+    vegetarian" became a permanent "Vegetarian" preference, after which the
+    agent refused to add a chicken karahi and would not say why. Browsing a
+    category is not a declaration.
+
+    So anything dietary has to be corroborated by the deterministic rules in
+    ``memory_extract``, which only fire on an outright statement ("I am
+    vegetarian", "I am allergic to peanuts"). Everything else the model finds -
+    a favourite dish, spice tolerance, a preferred name - is low-stakes and
+    passes through, since being wrong there costs a suggestion, not a meal.
+    """
+    rules = memory_extract.extract(message)
+    supported = " ".join(
+        e["text"].lower()
+        for e in (*rules["preferences"], *rules["facts"])
+        if e.get("text")
+    )
+
+    kept: list[dict[str, Any]] = []
+    for entry in entries:
+        text_ = str(entry.get("text") or "").lower()
+        if not text_:
+            continue
+        binding = any(word in text_ for word in BINDING_WORDS)
+        if binding and not any(word in supported for word in BINDING_WORDS):
+            logger.info(
+                "dropped uncorroborated %s memory %r - not declared in %r",
+                kind,
+                entry.get("text"),
+                message[:60],
+            )
+            continue
+        kept.append(entry)
+    return kept
 
 
 async def confirmation_token_for(user_id: str) -> str | None:

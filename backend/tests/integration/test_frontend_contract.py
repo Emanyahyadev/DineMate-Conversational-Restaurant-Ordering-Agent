@@ -31,7 +31,12 @@ async def test_browser_order_path(client):
     # ConfirmDialog -> POST /api/orders with an Idempotency-Key
     r = await c.post(
         "/api/orders",
-        json={"confirmation_token": token, "fulfilment": "pickup", "notes": ""},
+        json={
+            "confirmation_token": token,
+            "fulfilment": "pickup",
+            "contact_phone": "03001234567",
+            "notes": "",
+        },
         headers={"Idempotency-Key": "browser-1"},
     )
     assert r.status_code == 201
@@ -53,7 +58,7 @@ async def test_cart_change_disables_place_button(client):
 
     r = await c.post(
         "/api/orders",
-        json={"confirmation_token": token},
+        json={"confirmation_token": token, "contact_phone": "03001234567"},
         headers={"Idempotency-Key": "stale-ui"},
     )
     assert r.status_code == 409

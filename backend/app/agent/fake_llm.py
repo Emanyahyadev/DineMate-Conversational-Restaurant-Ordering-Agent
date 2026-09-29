@@ -82,6 +82,15 @@ def _parse(raw: Any) -> Any:
     return raw
 
 
+def _phone(input_items: Any) -> str | None:
+    """A number the customer has already given, anywhere in the thread."""
+    for item in list(input_items or []):
+        m = re.search(r"\b(0\d{9,11}|\+\d{10,14})\b", _text_of(item))
+        if m:
+            return m.group(1)
+    return None
+
+
 def _quantity(text: str) -> int:
     m = re.search(r"\b(\d{1,2})\b", text)
     if m:
@@ -96,7 +105,8 @@ def _fmt_cart(cart: dict[str, Any]) -> str:
     if not cart.get("lines"):
         return "Your order is empty at the moment."
     parts = [
-        f"{l['quantity']} x {l['name']} - {l['line_total_display']}" for l in cart["lines"]
+        f"{ln['quantity']} x {ln['name']} - {ln['line_total_display']}"
+        for ln in cart["lines"]
     ]
     return (
         "Here is your order: "
@@ -210,10 +220,26 @@ class _Responder:
                 return say(_fmt_cart(latest))
 
             if last_tool == "confirm_order" and isinstance(latest, dict):
+                # A basket spanning kitchens becomes several orders; read back
+                # every id, not just the first.
+                orders = latest.get("orders", [])
+                if not orders:
+                    return say("Your order is placed.")
+                if len(orders) == 1:
+                    o = orders[0]
+                    return say(
+                        f"All set. Your order is {o['id']} from {o['restaurant_name']} "
+                        f"and the total is {o['total_display']}. About "
+                        f"{o['eta_minutes']} minutes."
+                    )
+                listed = "; ".join(
+                    f"{o['id']} from {o['restaurant_name']} at {o['total_display']}"
+                    for o in orders
+                )
                 return say(
-                    f"All set. Your order is {latest['id']} and the total is "
-                    f"{latest['total_display']}. It should be about "
-                    f"{latest['eta_minutes']} minutes."
+                    f"All set, that is {len(orders)} orders because they come from "
+                    f"different kitchens: {listed}. Altogether "
+                    f"{latest.get('combined_total_display', '')}."
                 )
 
             if last_tool == "order_status" and isinstance(latest, dict):
@@ -228,7 +254,12 @@ class _Responder:
         # ---- decide the first action of the turn ----------------------------
         # Confirmation must follow a read-back, never precede one (BC-2).
         if re.search(r"\b(yes|yeah|yep|confirm|place it|go ahead|order it|do it)\b", text):
-            return call_tool("confirm_order", {"fulfilment": "pickup"})
+            # A phone number is required. A real customer states it; the fake
+            # stands in with a fixed one so the flow is exercised end to end.
+            phone = _phone(call.input) or "03001234567"
+            return call_tool(
+                "confirm_order", {"fulfilment": "pickup", "contact_phone": phone}
+            )
 
         if re.search(r"\bcancel\b", text):
             m = re.search(r"(ORD-\d{6})", text.upper())

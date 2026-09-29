@@ -18,6 +18,7 @@ export default function ChatHistory({
   onNew,
   onOpen,
   onDelete,
+  error = null,
   fill = false,
 }: {
   conversations: ConversationSummary[];
@@ -26,10 +27,15 @@ export default function ChatHistory({
   onNew: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Shown when a delete failed, so a refused action is never silent. */
+  error?: string | null;
   /** Fill the height of its own column, instead of capping at a few rows. */
   fill?: boolean;
 }) {
-  const shown = conversations.filter((c) => !c.empty || c.id === activeId);
+  // No filtering here: the server already omits threads with nothing in them,
+  // so `limit` counts real conversations. Filtering client-side meant blank
+  // threads used up the page and pushed real history out of the list.
+  const shown = conversations;
 
   return (
     <div className={`flex flex-col ${fill ? "h-full" : "max-h-full"}`}>
@@ -44,6 +50,12 @@ export default function ChatHistory({
           New chat
         </button>
       </div>
+
+      {error && (
+        <p role="alert" className="shrink-0 px-3 py-2 text-[12.5px] text-danger">
+          {error}
+        </p>
+      )}
 
       {shown.length > 0 && (
         <ul

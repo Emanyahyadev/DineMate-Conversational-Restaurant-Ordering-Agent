@@ -25,7 +25,7 @@ async def _seed_user_a():
         order = (
             await a.post(
                 "/api/orders",
-                json={"confirmation_token": token},
+                json={"confirmation_token": token, "contact_phone": "03001234567"},
                 headers={"Idempotency-Key": "alice-1"},
             )
         ).json()["order"]

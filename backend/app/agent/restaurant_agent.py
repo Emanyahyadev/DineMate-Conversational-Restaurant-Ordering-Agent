@@ -17,7 +17,9 @@ set_tracing_disabled(True)  # tracing goes to OpenAI; we run on DeepSeek
 def get_model() -> OpenAIChatCompletionsModel:
     """Built lazily so the app can start (and serve /health, /api/menu) without a key."""
     if not settings.deepseek_api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY is not set — copy .env.example to .env and fill it in.")
+        raise RuntimeError(
+            "DEEPSEEK_API_KEY is not set - copy .env.example to .env and fill it in."
+        )
     client = AsyncOpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
     return OpenAIChatCompletionsModel(model=settings.llm_model, openai_client=client)
 

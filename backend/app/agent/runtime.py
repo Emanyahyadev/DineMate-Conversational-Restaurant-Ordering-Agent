@@ -12,13 +12,14 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from app.agent.context import ChatContext
+from app.agent.harmony import HarmonySafeModel
 from app.agent.tools import TOOLS
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 set_tracing_disabled(True)  # SDK tracing uploads to OpenAI; we run on DeepSeek
 
-PROMPT_VERSION = "v1.1.0"
+PROMPT_VERSION = "v1.2.0"
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "system_v1_0_0.md"
 
 
@@ -42,7 +43,11 @@ def get_model() -> OpenAIChatCompletionsModel:
         timeout=settings.llm_timeout_seconds,
         max_retries=settings.llm_max_retries,
     )
-    return OpenAIChatCompletionsModel(model=settings.llm_model, openai_client=client)
+    # gpt-oss leaks its harmony control tokens through this endpoint, which
+    # mangles tool names and kills the turn. Only the models that need the
+    # repair get it, so a better model gets the stock stream (agent/harmony.py).
+    cls = HarmonySafeModel if "gpt-oss" in settings.llm_model else OpenAIChatCompletionsModel
+    return cls(model=settings.llm_model, openai_client=client)
 
 
 def _model():

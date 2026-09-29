@@ -74,7 +74,8 @@ class MixedRestaurants(DomainError):
 
 
 class InvalidOptions(DomainError):
-    code, http_status, message = "INVALID_OPTIONS", 400, "Those choices are not valid for that item."
+    code, http_status = "INVALID_OPTIONS", 400
+    message = "Those choices are not valid for that item."
 
 
 class QuantityOutOfRange(DomainError):

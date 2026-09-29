@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from app.api import auth, chat, kitchen, menu, orders
 from app.config import settings
 from app.db import postgres
+from app.deployment import check_deployment
 from app.services import memory_service
 from app.services.errors import DomainError, ValidationError
 
@@ -26,10 +27,20 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Configuration that would fail later, in the browser, as something that
+    # looks unrelated. Named here instead (see app/deployment.py).
+    problems = check_deployment(settings)
+    if problems and settings.is_production:
+        raise RuntimeError(
+            "Refusing to start with this configuration:\n  - " + "\n  - ".join(problems)
+        )
+    for problem in problems:
+        logger.warning("deployment: %s", problem)
+
     # Schema is owned by Alembic; the app never creates tables.
     try:
         await postgres.ping()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("postgres unreachable at startup: %s", exc)
     yield
 
@@ -98,7 +109,7 @@ async def ready() -> JSONResponse:
 
     try:
         await postgres.ping()
-    except Exception:  # noqa: BLE001
+    except Exception:
         checks["postgres"] = "unavailable"
 
     if not await memory_service.ping():

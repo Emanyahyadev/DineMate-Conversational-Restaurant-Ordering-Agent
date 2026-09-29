@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-09-07T13:18:48.685171+00:00",
-  "cases": 31,
-  "passed": 31,
+  "generated_at": "2026-09-08T08:14:57.437297+00:00",
+  "cases": 32,
+  "passed": 32,
   "failed": 0,
   "hard_violations": {
     "A01": 0,
@@ -36,7 +36,7 @@
       "score": 1.0
     },
     "A06": {
-      "cases": 3,
+      "cases": 4,
       "violations": 0,
       "score": 1.0
     },
@@ -51,7 +51,7 @@
       "score": 1.0
     },
     "A10": {
-      "cases": 3,
+      "cases": 2,
       "violations": 0,
       "score": 1.0
     },
@@ -429,14 +429,14 @@
     },
     {
       "id": "EV-REST-02",
-      "title": "One order cannot mix two kitchens (Rule K1)",
+      "title": "A basket may span kitchens",
       "passed": true,
       "us": [
-        "US-07"
+        "US-07",
+        "US-08"
       ],
       "kpi": [
-        "A05",
-        "A10"
+        "A05"
       ],
       "violations": [],
       "failures": []
@@ -478,6 +478,19 @@
       ],
       "kpi": [
         "A02"
+      ],
+      "violations": [],
+      "failures": []
+    },
+    {
+      "id": "EV-REST-06",
+      "title": "A cross-kitchen basket becomes one order per kitchen",
+      "passed": true,
+      "us": [
+        "US-13"
+      ],
+      "kpi": [
+        "A06"
       ],
       "violations": [],
       "failures": []

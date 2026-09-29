@@ -55,3 +55,40 @@ def test_money_fields_carry_both_forms():
 def test_negative_quantity_rejected():
     with pytest.raises(ValueError):
         money.line_total(100, -1)
+
+
+# ---------------------------------------------------------------- to_minor
+# The single boundary where a typed price becomes an integer. Everything past
+# it is integer minor units, so this is where a float would sneak in.
+
+
+@pytest.mark.parametrize(
+    "typed, expected",
+    [
+        ("1650", 1650),
+        ("1,650", 1650),
+        ("Rs 1650", 1650),
+        ("Rs 1,650", 1650),
+        ("  240  ", 240),
+        (1650, 1650),
+    ],
+)
+def test_prices_are_read_the_way_people_type_them(typed, expected):
+    assert money.to_minor(typed) == expected
+
+
+@pytest.mark.parametrize("bad", ["", "free", "abc", "1.2.3", "Rs", "-"])
+def test_nonsense_is_refused(bad):
+    with pytest.raises(ValueError):
+        money.to_minor(bad)
+
+
+def test_a_rupee_price_rejects_decimals():
+    """PKR has no practical subunit, so 16.50 is a mistake worth catching."""
+    with pytest.raises(ValueError):
+        money.to_minor("16.50")
+
+
+def test_the_result_is_always_an_int():
+    value = money.to_minor("1650")
+    assert isinstance(value, int) and not isinstance(value, bool)

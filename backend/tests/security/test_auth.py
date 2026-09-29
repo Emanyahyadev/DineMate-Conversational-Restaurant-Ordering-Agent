@@ -1,5 +1,4 @@
 """AUTH_SPEC.md section 7 attack posture."""
-import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.main import app
@@ -48,7 +47,8 @@ async def test_tampered_jwt_rejected(client):
 
 async def test_alg_none_jwt_rejected(client):
     """A classic: a token signed with 'none' must never be accepted."""
-    import base64, json
+    import base64
+    import json
 
     header = base64.urlsafe_b64encode(json.dumps({"alg": "none", "typ": "JWT"}).encode()).rstrip(b"=")
     payload = base64.urlsafe_b64encode(

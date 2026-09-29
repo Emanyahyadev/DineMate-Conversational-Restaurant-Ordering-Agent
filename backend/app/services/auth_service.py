@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from argon2 import PasswordHasher
@@ -50,7 +50,7 @@ def verify_password(password_hash: str | None, password: str) -> bool:
     try:
         _hasher.verify(password_hash, password)
         return True
-    except (VerifyMismatchError, Exception):  # noqa: B014 - any argon2 error is a failure
+    except (VerifyMismatchError, Exception):
         return False
 
 
@@ -66,7 +66,7 @@ def _hash_token(raw: str) -> str:
 
 
 def create_access_token(user_id: str, session_id: str) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": user_id,
         "sid": session_id,
@@ -105,6 +105,7 @@ async def register(
     session: AsyncSession, *, email: str, password: str, display_name: str | None = None
 ) -> User:
     email = email.strip().lower()
+    password = normalise_password(password)
     validate_password(password)
 
     existing = await session.execute(select(User).where(User.email == email))
@@ -122,10 +123,26 @@ async def register(
     return user
 
 
+def normalise_password(password: str) -> str:
+    """Strip surrounding whitespace from a password.
+
+    Credentials are pasted far more often than typed, and a copy out of a chat
+    message, a table cell or a spreadsheet routinely carries a trailing space.
+    That produced a silent 401 against a password that was, to the eye,
+    completely correct - the single most confusing way to fail a login.
+
+    Applied on both sides of the account's life (registration and sign-in), so
+    the two always agree. Nobody deliberately ends a password with a space, and
+    the lost entropy is a rounding error against a 12-character minimum.
+    """
+    return password.strip()
+
+
 async def authenticate(session: AsyncSession, *, email: str, password: str) -> User:
     """Identical response and comparable timing whether or not the account exists."""
     row = await session.execute(select(User).where(User.email == email.strip().lower()))
     user = row.scalar_one_or_none()
+    password = normalise_password(password)
 
     if user is None:
         # Burn comparable time so absence is not detectable by latency.
@@ -145,7 +162,7 @@ async def create_session(
         refresh_token_hash=_hash_token(raw_refresh),
         user_agent=user_agent[:300] or None,
         ip_hash=hashlib.sha256(ip.encode()).hexdigest()[:32] if ip else None,
-        expires_at=datetime.now(timezone.utc)
+        expires_at=datetime.now(UTC)
         + timedelta(days=settings.refresh_token_ttl_days),
     )
     session.add(row)
@@ -161,7 +178,7 @@ async def rotate_session(
         select(SessionRow).where(SessionRow.refresh_token_hash == _hash_token(raw_refresh))
     )
     current = row.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if current is None:
         raise Unauthenticated("Please sign in again.")
@@ -193,7 +210,7 @@ async def rotate_session(
 async def revoke(session: AsyncSession, session_id: str) -> None:
     row = await session.get(SessionRow, session_id)
     if row is not None and row.revoked_at is None:
-        row.revoked_at = datetime.now(timezone.utc)
+        row.revoked_at = datetime.now(UTC)
         await session.flush()
 
 
@@ -201,7 +218,7 @@ async def revoke_all(session: AsyncSession, user_id: str) -> None:
     rows = await session.execute(
         select(SessionRow).where(SessionRow.user_id == user_id, SessionRow.revoked_at.is_(None))
     )
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     for row in rows.scalars():
         row.revoked_at = now
     await session.flush()

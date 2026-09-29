@@ -3,10 +3,8 @@
 This is the customer ownership rule one level up: staff identity comes from the
 account, no route takes a restaurant_id, and a customer cannot reach any of it.
 """
-import pytest
-from sqlalchemy import select
 
-from app.db.models import Restaurant, User
+from app.db.models import User
 from app.db.postgres import SessionLocal
 from tests.conftest import register_and_login
 
@@ -28,7 +26,7 @@ async def place_order(c, item_id):
     token = (await c.get("/api/cart")).json()["confirmation_token"]
     r = await c.post(
         "/api/orders",
-        json={"confirmation_token": token},
+        json={"confirmation_token": token, "contact_phone": "03001234567"},
         headers={"Idempotency-Key": f"k-{item_id}"},
     )
     assert r.status_code == 201, r.text

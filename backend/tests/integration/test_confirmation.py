@@ -1,5 +1,5 @@
 """The confirmation protocol and cancellation window (ADR-0004, Rules L2/L3)."""
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -16,10 +16,10 @@ async def _cart_with_token(c, item="r1-m1", qty=1):
 async def test_token_single_use(client):
     c = await register_and_login(client, "single@dinemate.example")
     token = await _cart_with_token(c)
-    r1 = await c.post("/api/orders", json={"confirmation_token": token},
+    r1 = await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                       headers={"Idempotency-Key": "k1"})
     assert r1.status_code == 201
-    r2 = await c.post("/api/orders", json={"confirmation_token": token},
+    r2 = await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                       headers={"Idempotency-Key": "k2"})
     assert r2.status_code == 409
 
@@ -29,7 +29,7 @@ async def test_cart_change_invalidates_token(client):
     c = await register_and_login(client, "stale@dinemate.example")
     token = await _cart_with_token(c)
     await c.post("/api/cart/lines", json={"item_id": "r1-m5", "quantity": 1})
-    r = await c.post("/api/orders", json={"confirmation_token": token},
+    r = await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                      headers={"Idempotency-Key": "k3"})
     assert r.status_code == 409
     assert r.json()["error"]["code"] in ("CART_CHANGED", "NO_CONFIRMATION")
@@ -40,8 +40,8 @@ async def test_idempotency_replay_returns_same_order(client):
     c = await register_and_login(client, "idem@dinemate.example")
     token = await _cart_with_token(c, qty=2)
     h = {"Idempotency-Key": "same-key"}
-    r1 = await c.post("/api/orders", json={"confirmation_token": token}, headers=h)
-    r2 = await c.post("/api/orders", json={"confirmation_token": token}, headers=h)
+    r1 = await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"}, headers=h)
+    r2 = await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"}, headers=h)
     assert r1.status_code == 201
     assert r2.json()["order"]["id"] == r1.json()["order"]["id"]
 
@@ -59,7 +59,7 @@ async def test_empty_cart_has_no_token(client):
 async def test_cancel_inside_window(client):
     c = await register_and_login(client, "cancel1@dinemate.example")
     token = await _cart_with_token(c)
-    order = (await c.post("/api/orders", json={"confirmation_token": token},
+    order = (await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                           headers={"Idempotency-Key": "c1"})).json()["order"]
     r = await c.post(f"/api/orders/{order['id']}/cancel", json={"reason": "changed my mind"})
     assert r.status_code == 200
@@ -70,12 +70,12 @@ async def test_cancel_outside_window_refused(client):
     """Rule L2: 10 minutes, and the boundary is closed."""
     c = await register_and_login(client, "cancel2@dinemate.example")
     token = await _cart_with_token(c)
-    order = (await c.post("/api/orders", json={"confirmation_token": token},
+    order = (await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                           headers={"Idempotency-Key": "c2"})).json()["order"]
 
     async with SessionLocal() as s:
         row = await s.get(Order, order["id"])
-        row.confirmed_at = datetime.now(timezone.utc) - timedelta(minutes=11)
+        row.confirmed_at = datetime.now(UTC) - timedelta(minutes=11)
         await s.commit()
 
     r = await c.post(f"/api/orders/{order['id']}/cancel", json={})
@@ -87,7 +87,7 @@ async def test_cancel_once_preparing_refused(client):
     """Rule L3: from preparing on, only staff may cancel."""
     c = await register_and_login(client, "cancel3@dinemate.example")
     token = await _cart_with_token(c)
-    order = (await c.post("/api/orders", json={"confirmation_token": token},
+    order = (await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                           headers={"Idempotency-Key": "c3"})).json()["order"]
 
     from app.config import settings
@@ -105,7 +105,7 @@ async def test_cancel_once_preparing_refused(client):
 async def test_illegal_transition_rejected(client):
     c = await register_and_login(client, "trans@dinemate.example")
     token = await _cart_with_token(c)
-    order = (await c.post("/api/orders", json={"confirmation_token": token},
+    order = (await c.post("/api/orders", json={"confirmation_token": token, "contact_phone": "03001234567"},
                           headers={"Idempotency-Key": "c4"})).json()["order"]
 
     from app.config import settings

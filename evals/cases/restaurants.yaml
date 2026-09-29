@@ -10,16 +10,21 @@
     orders_created: 0
 
 - id: EV-REST-02
-  title: One order cannot mix two kitchens (Rule K1)
-  us: [US-07]
-  kpi: [A05, A10]
+  title: A basket may span kitchens
+  us: [US-07, US-08]
+  kpi: [A05]
   seed:
     cart:
       - { item_id: r1-m1, quantity: 1 }
   turns:
     - user: "also add a chapli kabab"
+      expect:
+        tools: [{ name: add_to_cart, args: { item_id: r4-m2 } }]
+        not_tools: [confirm_order]
   assert_final:
-    cart_lines: [{ item_id: r1-m1, quantity: 1 }]
+    cart_lines:
+      - { item_id: r1-m1, quantity: 1 }
+      - { item_id: r4-m2, quantity: 1 }
     orders_created: 0
 
 - id: EV-REST-03
@@ -57,3 +62,23 @@
     - user: "I am hungry, what do you have?"
   assert_final:
     orders_created: 0
+
+- id: EV-REST-06
+  title: A cross-kitchen basket becomes one order per kitchen
+  us: [US-13]
+  kpi: [A06]
+  seed:
+    cart:
+      - { item_id: r3-m1, quantity: 1 }
+      - { item_id: r5-m1, quantity: 1 }
+  turns:
+    - user: "that's everything"
+      expect:
+        tools: [{ name: view_cart }]
+        not_tools: [confirm_order]
+    - user: "yes, place it"
+      expect:
+        tools: [{ name: confirm_order }]
+  assert_final:
+    orders_created: 2
+    order_status: confirmed

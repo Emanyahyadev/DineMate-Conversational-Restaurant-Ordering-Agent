@@ -7,7 +7,8 @@ order can come into existence (INV-8).
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta, timezone
+import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -21,6 +22,7 @@ from app.db.models import (
     Order,
     OrderEvent,
     OrderLine,
+    User,
 )
 from app.services import cart_service, money
 from app.services.errors import (
@@ -32,6 +34,7 @@ from app.services.errors import (
     NoConfirmation,
     OrderNotCancellable,
     OrderNotFound,
+    ValidationError,
 )
 
 # DOMAIN_MODEL.md section 2 - Rule L1: only these transitions exist.
@@ -59,23 +62,26 @@ def serialise(order: Order, *, include_events: bool = False) -> dict[str, Any]:
     )
     data: dict[str, Any] = {
         "id": order.id,
+        "order_group_id": order.order_group_id,
         "restaurant_id": order.restaurant_id,
         "restaurant_name": order.restaurant_name,
         "status": order.status,
         "fulfilment": order.fulfilment,
         "payment_method": order.payment_method,
+        "contact_phone": order.contact_phone,
+        "delivery_address": order.delivery_address,
         "notes": order.notes,
         "lines": [
             {
-                "item_id": l.menu_item_id,
-                "name": l.item_name,
-                "quantity": l.quantity,
-                "options": l.options_json,
-                "note": l.note,
-                **money.money_fields("unit_price", l.unit_price),
-                **money.money_fields("line_total", l.line_total),
+                "item_id": ln.menu_item_id,
+                "name": ln.item_name,
+                "quantity": ln.quantity,
+                "options": ln.options_json,
+                "note": ln.note,
+                **money.money_fields("unit_price", ln.unit_price),
+                **money.money_fields("line_total", ln.line_total),
             }
-            for l in order.lines
+            for ln in order.lines
         ],
         **money.money_fields("subtotal", order.subtotal),
         **money.money_fields("tax", order.tax),
@@ -99,6 +105,22 @@ def serialise(order: Order, *, include_events: bool = False) -> dict[str, Any]:
     return data
 
 
+async def contact_on_file(session: AsyncSession, user_id: str) -> dict[str, str]:
+    """The delivery details we already hold for this customer.
+
+    Kept in Postgres on the account rather than in the memory profile: it is
+    contact PII, which AGENT_SPEC section 6 keeps out of the free-form memory
+    documents, and it has to be deletable with the account in one transaction.
+    """
+    customer = await session.get(User, user_id)
+    if customer is None:
+        return {"phone": "", "address": ""}
+    return {
+        "phone": (customer.phone or "").strip(),
+        "address": (customer.default_address or "").strip(),
+    }
+
+
 async def confirm(
     session: AsyncSession,
     user_id: str,
@@ -106,21 +128,30 @@ async def confirm(
     confirmation_token: str | None,
     fulfilment: str = "pickup",
     notes: str = "",
+    contact_phone: str = "",
+    delivery_address: str = "",
     idempotency_key: str | None = None,
-) -> dict[str, Any]:
+) -> list[dict[str, Any]]:
     """Rule R1 - atomic. Validates the token, snapshots prices, writes the
-    order, clears the cart and consumes the token, or does none of it."""
+    order(s), clears the cart and consumes the token, or does none of it.
 
-    # Idempotency: a retried confirm returns the original order (KPI R05).
+    A basket may span kitchens, and each kitchen cooks and dispatches on its own
+    clock: one row cannot be "preparing" at Sindhi Biryani Co and "ready" at
+    Chai Khana. So the basket splits into one order per kitchen, tied together
+    by ``order_group_id`` for the customer's benefit. Every order is still a
+    complete, independently cancellable record (INV-4 to INV-8).
+
+    Returns the orders in menu order, always a list - even for one kitchen.
+    """
     if idempotency_key:
         existing = await session.execute(
-            select(Order).where(
-                Order.idempotency_key == idempotency_key, Order.user_id == user_id
-            )
+            select(Order)
+            .where(Order.user_id == user_id)
+            .where(Order.idempotency_key.like(f"{idempotency_key}%"))
         )
-        prior = existing.scalar_one_or_none()
-        if prior is not None:
-            return serialise(prior)
+        prior = list(existing.scalars())
+        if prior:
+            return [serialise(o) for o in prior]
 
     if not confirmation_token:
         raise NoConfirmation()
@@ -131,7 +162,7 @@ async def confirm(
         .with_for_update()
     )
     token = row.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if token is None or token.user_id != user_id:
         raise NoConfirmation()
@@ -159,56 +190,91 @@ async def confirm(
                 item_id=line.menu_item_id,
             )
 
-    sub = cart_data["subtotal_cents"]
-    tax = cart_data["tax_cents"]
-    fee = 0
-    order = Order(
-        id=_new_order_id(),
-        user_id=user_id,
-        restaurant_id=cart.restaurant_id,
-        restaurant_name=cart_data.get("restaurant_name") or "",
-        status="confirmed",
-        fulfilment=fulfilment if fulfilment in ("pickup", "delivery") else "pickup",
-        subtotal=sub,
-        tax=tax,
-        delivery_fee=fee,
-        total=money.order_total(sub, tax, fee),
-        notes=notes[:500],
-        idempotency_key=idempotency_key,
-        confirmed_at=now,
-    )
-    session.add(order)
-    await session.flush()
+    fulfilment = fulfilment if fulfilment in ("pickup", "delivery") else "pickup"
+    phone = contact_phone.strip()[:32]
+    address = delivery_address.strip()[:400]
 
-    for line in cart_data["lines"]:  # Rule R2 - price snapshots
+    # What we already hold stands in for what was not supplied, so a returning
+    # customer is asked to confirm rather than to type it all again (Rule N1).
+    # Anything supplied wins: this is a fallback, never an override.
+    customer = await session.get(User, user_id)
+    if customer is not None:
+        phone = phone or (customer.phone or "").strip()
+        if fulfilment == "delivery":
+            address = address or (customer.default_address or "").strip()
+
+    if not phone:
+        raise ValidationError("We need a phone number in case the kitchen has to call.")
+    if fulfilment == "delivery" and not address:
+        raise ValidationError("We need an address to deliver to.")
+
+    # ...and today's details become the ones we hold for next time.
+    if customer is not None:
+        customer.phone = phone
+        if address:
+            customer.default_address = address
+
+    group_id = str(uuid.uuid4())
+    created: list[Order] = []
+
+    for index, group in enumerate(cart_data["restaurants"]):
+        sub = group["subtotal_cents"]
+        tax = money.tax_for(sub)
+        # Charged per kitchen: each sends its own rider.
+        fee = settings.delivery_fee if fulfilment == "delivery" else 0
+        order = Order(
+            id=_new_order_id(),
+            user_id=user_id,
+            restaurant_id=group["restaurant_id"],
+            restaurant_name=group["restaurant_name"],
+            order_group_id=group_id,
+            status="confirmed",
+            fulfilment=fulfilment,
+            contact_phone=phone,
+            delivery_address=address if fulfilment == "delivery" else "",
+            subtotal=sub,
+            tax=tax,
+            delivery_fee=fee,
+            total=money.order_total(sub, tax, fee),
+            notes=notes[:500],
+            # Suffixed so a replayed checkout matches every order it created.
+            idempotency_key=f"{idempotency_key}:{index}" if idempotency_key else None,
+            confirmed_at=now,
+        )
+        session.add(order)
+        await session.flush()
+
+        for line in group["lines"]:  # Rule R2 - price snapshots
+            session.add(
+                OrderLine(
+                    order_id=order.id,
+                    menu_item_id=line["item_id"],
+                    item_name=line["name"],
+                    unit_price=line["unit_price_cents"],
+                    quantity=line["quantity"],
+                    line_total=line["line_total_cents"],
+                    options_json=line["options"],
+                    note=line["note"],
+                )
+            )
+
         session.add(
-            OrderLine(
+            OrderEvent(  # INV-6
                 order_id=order.id,
-                menu_item_id=line["item_id"],
-                item_name=line["name"],
-                unit_price=line["unit_price_cents"],
-                quantity=line["quantity"],
-                line_total=line["line_total_cents"],
-                options_json=line["options"],
-                note=line["note"],
+                from_status=None,
+                to_status="confirmed",
+                actor="customer",
+                reason="confirmed in conversation",
             )
         )
-
-    session.add(
-        OrderEvent(  # INV-6
-            order_id=order.id,
-            from_status=None,
-            to_status="confirmed",
-            actor="customer",
-            reason="confirmed in conversation",
-        )
-    )
+        created.append(order)
 
     token.consumed_at = now
     cart.status = "confirmed"
     await session.flush()
-    await session.refresh(order)
-    return serialise(order)
+    for order in created:
+        await session.refresh(order)
+    return [serialise(o) for o in created]
 
 
 async def get_order(session: AsyncSession, user_id: str, order_id: str) -> Order:
@@ -268,7 +334,7 @@ async def transition(
     )
     order.status = to_status
     if to_status == "cancelled":
-        order.cancelled_at = datetime.now(timezone.utc)
+        order.cancelled_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(order)
     return order
@@ -286,7 +352,7 @@ async def cancel(
         raise OrderNotCancellable(f"That order is already {order.status}.")
 
     deadline = order.confirmed_at + timedelta(minutes=settings.cancellation_window_minutes)
-    if datetime.now(timezone.utc) >= deadline:
+    if datetime.now(UTC) >= deadline:
         raise CancellationWindowExpired()
 
     order = await transition(

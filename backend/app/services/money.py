@@ -57,6 +57,33 @@ def display(minor: int) -> str:
     return f"{sign}{symbol}{minor // scale:,}.{minor % scale:0{places}d}"
 
 
+def to_minor(amount: str | int) -> int:
+    """Parse what a person typed into integer minor units.
+
+    The inverse of ``display`` and the only place a typed price becomes a
+    number, so a float never gets near the rest of the system. Accepts the
+    shapes people actually enter - "1650", "1,650", "Rs 1650", "16.50" - and
+    refuses anything more precise than the currency has.
+    """
+    text = str(amount) if isinstance(amount, int) else amount.strip()
+
+    # Strip a currency symbol and thousands separators, keep digits and one dot.
+    cleaned = "".join(ch for ch in text if ch.isdigit() or ch in ".-")
+    if not cleaned or cleaned.count(".") > 1:
+        raise ValueError("not a price")
+
+    places = settings.currency_decimals
+    try:
+        value = Decimal(cleaned)
+    except Exception as exc:
+        raise ValueError("not a price") from exc
+
+    if value != value.quantize(Decimal(1).scaleb(-places)):
+        raise ValueError("too many decimal places for this currency")
+
+    return int((value * (10**places)).to_integral_value(rounding=ROUND_HALF_UP))
+
+
 def money_fields(prefix: str, cents: int) -> dict[str, object]:
     """Every money value crosses the API as both cents and display."""
     return {f"{prefix}_cents": cents, f"{prefix}_display": display(cents)}

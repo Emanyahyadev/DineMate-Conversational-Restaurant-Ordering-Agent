@@ -8,7 +8,7 @@ from fastapi import Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.db.postgres import SessionLocal
+from app.db.postgres import ReadSessionLocal, SessionLocal
 from app.services import auth_service
 from app.services.errors import Unauthenticated
 
@@ -26,6 +26,17 @@ async def get_db() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def get_read_db() -> AsyncIterator[AsyncSession]:
+    """A session for endpoints that only read.
+
+    No BEGIN, no COMMIT: on a database in another region those two round trips
+    are most of a read endpoint's latency (see ReadSessionLocal). Only use this
+    where nothing is written - there is no transaction here to roll back.
+    """
+    async with ReadSessionLocal() as session:
+        yield session
 
 
 async def current_user_id(request: Request) -> str:
@@ -57,6 +68,7 @@ async def verify_csrf(request: Request) -> None:
 def set_auth_cookies(
     response: Response, *, access: str, refresh: str, csrf: str
 ) -> None:
+    same_site = settings.cookie_samesite
     common = {
         "httponly": True,
         "secure": settings.cookie_secure,
@@ -66,15 +78,19 @@ def set_auth_cookies(
         ACCESS_COOKIE,
         access,
         max_age=settings.access_token_ttl_seconds,
-        samesite="lax",
+        samesite=same_site,
         path="/",
         **common,
     )
+    # The refresh token is the most sensitive of the three, so it keeps the
+    # tightest policy the deployment allows: Strict when everything is one site,
+    # and only relaxed to None when the frontend is genuinely on another origin
+    # and Strict would stop refresh working at all.
     response.set_cookie(
         REFRESH_COOKIE,
         refresh,
         max_age=settings.refresh_token_ttl_days * 86400,
-        samesite="strict",
+        samesite="none" if same_site == "none" else "strict",
         path="/api/auth",
         **common,
     )
@@ -83,7 +99,7 @@ def set_auth_cookies(
         CSRF_COOKIE,
         csrf,
         max_age=settings.refresh_token_ttl_days * 86400,
-        samesite="lax",
+        samesite=same_site,
         path="/",
         httponly=False,
         secure=settings.cookie_secure,
@@ -102,4 +118,5 @@ def clear_auth_cookies(response: Response) -> None:
 
 CurrentUser = Depends(current_user_id)
 Db = Depends(get_db)
+ReadDb = Depends(get_read_db)
 Csrf = Depends(verify_csrf)

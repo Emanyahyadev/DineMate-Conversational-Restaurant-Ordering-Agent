@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import current_user_id, get_db, verify_csrf
+from app.api.deps import current_user_id, get_db, get_read_db, verify_csrf
 from app.config import settings
-from app.services import cart_service, order_service
+from app.services import cart_service, money, order_service, rating_service
 from app.services.errors import NotFound, Unauthenticated
 
 router = APIRouter(prefix="/api", tags=["orders"])
@@ -32,6 +32,8 @@ class UpdateLineRequest(BaseModel):
 class ConfirmRequest(BaseModel):
     confirmation_token: str
     fulfilment: str = "pickup"
+    contact_phone: str = Field(default="", max_length=32)
+    delivery_address: str = Field(default="", max_length=400)
     notes: str = Field(default="", max_length=500)
 
     model_config = {"extra": "forbid"}
@@ -62,7 +64,20 @@ async def get_cart(
     token = await cart_service.latest_valid_token(session, user_id)
     if token is None:
         token = await cart_service.issue_confirmation_token(session, user_id)
-    return {"cart": cart, "confirmation_token": token}
+
+    # Saved details, so a returning customer is not asked for them again.
+    from app.db.models import User
+
+    customer = await session.get(User, user_id)
+    return {
+        "cart": cart,
+        "confirmation_token": token,
+        "contact": {
+            "phone": (customer.phone if customer else None) or "",
+            "address": (customer.default_address if customer else None) or "",
+        },
+        "delivery_fee_display": money.display(settings.delivery_fee),
+    }
 
 
 @router.post("/cart/lines", dependencies=[Depends(verify_csrf)])
@@ -120,30 +135,48 @@ async def create_order(
     session: AsyncSession = Depends(get_db),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> dict:
-    order = await order_service.confirm(
+    orders = await order_service.confirm(
         session,
         user_id,
         confirmation_token=payload.confirmation_token,
         fulfilment=payload.fulfilment,
         notes=payload.notes,
+        contact_phone=payload.contact_phone,
+        delivery_address=payload.delivery_address,
         idempotency_key=idempotency_key,
     )
-    return {"order": order}
+    # A basket spanning kitchens becomes several orders. `order` stays for the
+    # single-kitchen case so existing clients keep working.
+    return {"orders": orders, "order": orders[0]}
 
 
 @router.get("/orders")
 async def list_orders(
-    user_id: str = Depends(current_user_id), session: AsyncSession = Depends(get_db)
+    user_id: str = Depends(current_user_id), session: AsyncSession = Depends(get_read_db)
 ) -> dict:
+    """This customer's orders, each carrying its own rating if they left one.
+
+    Fetched as one keyed lookup rather than a query per order, so the page cost
+    does not grow with order history.
+    """
     orders = await order_service.list_orders(session, user_id)
-    return {"items": [order_service.serialise(o) for o in orders]}
+    mine = await rating_service.ratings_by_order(session, user_id)
+    items = []
+    for order in orders:
+        data = order_service.serialise(order)
+        data["rating"] = mine.get(order.id)
+        data["can_rate"] = order.status in rating_service.RATEABLE_STATUSES and (
+            order.id not in mine
+        )
+        items.append(data)
+    return {"items": items}
 
 
 @router.get("/orders/{order_id}")
 async def get_order(
     order_id: str,
     user_id: str = Depends(current_user_id),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_read_db),
 ) -> dict:
     order = await order_service.get_order(session, user_id, order_id)
     return {"order": order_service.serialise(order, include_events=True)}
@@ -160,6 +193,27 @@ async def cancel_order(
         session, user_id, order_id=order_id, reason=payload.reason
     )
     return {"order": order}
+
+
+class RatingRequest(BaseModel):
+    stars: int = Field(ge=1, le=5)
+    comment: str = Field(default="", max_length=500)
+
+    model_config = {"extra": "forbid"}
+
+
+@router.post("/orders/{order_id}/rating", status_code=201, dependencies=[Depends(verify_csrf)])
+async def rate_order(
+    order_id: str,
+    payload: RatingRequest,
+    user_id: str = Depends(current_user_id),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Rate your own completed order. One verdict per order."""
+    rating = await rating_service.rate_order(
+        session, user_id, order_id=order_id, stars=payload.stars, comment=payload.comment
+    )
+    return {"rating": rating}
 
 
 # ------------------------------------------------------------------ internal

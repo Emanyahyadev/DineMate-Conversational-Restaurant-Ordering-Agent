@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.orchestrator import load_history, run_turn_stream
-from app.api.deps import current_user_id, get_db, verify_csrf
+from app.api.deps import current_user_id, get_db, get_read_db, verify_csrf
 from app.db.models import Conversation, Message, User
 from app.services import auth_service, memory_service, order_service
 from app.services.errors import NotFound
@@ -41,7 +41,7 @@ async def chat(payload: ChatRequest, user_id: str = Depends(current_user_id)):
 
 @router.get("/greeting")
 async def greeting(
-    user_id: str = Depends(current_user_id), session: AsyncSession = Depends(get_db)
+    user_id: str = Depends(current_user_id), session: AsyncSession = Depends(get_read_db)
 ) -> dict:
     """The opening line, personalised from what DineMate already knows.
 
@@ -119,7 +119,28 @@ async def new_conversation(
     session: AsyncSession = Depends(get_db),
     _: None = Depends(verify_csrf),
 ) -> dict:
-    """Start a fresh thread. Memory persists across conversations by design."""
+    """Start a fresh thread. Memory persists across conversations by design.
+
+    Reuses the customer's existing blank thread if they already have one.
+    Pressing "New chat" repeatedly should not litter the sidebar - and once
+    enough blanks accumulate they push real threads past the list limit, which
+    is what made history look like it was not being saved at all.
+    """
+    existing = await session.execute(
+        select(Conversation)
+        .where(
+            Conversation.user_id == user_id,
+            ~select(Message.id)
+            .where(Message.conversation_id == Conversation.id)
+            .exists(),
+        )
+        .order_by(Conversation.created_at.desc())
+        .limit(1)
+    )
+    blank = existing.scalar_one_or_none()
+    if blank is not None:
+        return {"id": blank.id, "messages": []}
+
     conversation = Conversation(user_id=user_id)
     session.add(conversation)
     await session.flush()
@@ -129,41 +150,53 @@ async def new_conversation(
 @router.get("/conversations")
 async def list_conversations(
     user_id: str = Depends(current_user_id),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_read_db),
     limit: int = 20,
 ) -> dict:
+    """The sidebar list: threads that have something in them, newest use first.
+
+    Blank threads are excluded in SQL rather than by the client, so `limit`
+    counts real conversations. The opening line is fetched with a lateral join
+    instead of a query per row: at 20 threads the old shape was 21 round trips
+    to Neon, which is most of the sidebar's load time.
+    """
+    opener = (
+        select(Message.content)
+        .where(Message.conversation_id == Conversation.id, Message.role == "user")
+        .order_by(Message.id)
+        .limit(1)
+        .scalar_subquery()
+        .label("opener")
+    )
     rows = await session.execute(
-        select(Conversation)
-        .where(Conversation.user_id == user_id)
+        select(Conversation, opener)
+        .where(
+            Conversation.user_id == user_id,
+            select(Message.id)
+            .where(Message.conversation_id == Conversation.id)
+            .exists(),
+        )
         .order_by(Conversation.updated_at.desc())
         .limit(min(limit, 50))
     )
-    conversations = list(rows.scalars())
-    items = []
-    for c in conversations:
-        first = await session.execute(
-            select(Message.content)
-            .where(Message.conversation_id == c.id, Message.role == "user")
-            .order_by(Message.id)
-            .limit(1)
-        )
-        preview = first.scalar_one_or_none()
-        items.append(
+    return {
+        "items": [
             {
                 "id": c.id,
-                "title": c.title or (preview[:60] if preview else "New conversation"),
+                "title": c.title or (opening[:60] if opening else "New conversation"),
                 "updated_at": c.updated_at.isoformat() if c.updated_at else None,
-                "empty": preview is None,
+                "empty": False,
             }
-        )
-    return {"items": items}
+            for c, opening in rows
+        ]
+    }
 
 
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
     user_id: str = Depends(current_user_id),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_read_db),
 ) -> dict:
     row = await session.execute(
         select(Conversation).where(
@@ -197,7 +230,7 @@ async def delete_conversation(
 # ------------------------------------------------------------------ profile
 @router.get("/profile")
 async def profile(
-    user_id: str = Depends(current_user_id), session: AsyncSession = Depends(get_db)
+    user_id: str = Depends(current_user_id), session: AsyncSession = Depends(get_read_db)
 ) -> dict:
     user = await session.get(User, user_id)
     if user is None:

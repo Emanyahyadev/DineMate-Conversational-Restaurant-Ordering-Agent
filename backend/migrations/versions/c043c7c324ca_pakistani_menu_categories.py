@@ -9,14 +9,14 @@ Revises: f04ff57e5e4e
 Create Date: 2026-09-07 16:27:55.672676
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 
 revision: str = "c043c7c324ca"
-down_revision: Union[str, Sequence[str], None] = "f04ff57e5e4e"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "f04ff57e5e4e"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 OLD = "'Starters','Pizza','Pasta','Salad','Sides','Dessert','Drinks'"
 NEW = (

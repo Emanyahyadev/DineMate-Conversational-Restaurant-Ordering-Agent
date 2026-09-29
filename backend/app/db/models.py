@@ -50,6 +50,12 @@ class User(Base):
     # Staff identity. A null restaurant means an ordinary customer; a set one
     # means this account may see and advance that kitchen's orders, and only
     # that kitchen's (AUTH_SPEC section 5 - the ownership rule, one level up).
+    # Kept as defaults so a returning customer is not asked twice. Snapshotted
+    # onto each order, because a later change of address must not rewrite the
+    # address a courier was already given (same reasoning as Rule R2 on prices).
+    phone: Mapped[str | None] = mapped_column(String(32))
+    default_address: Mapped[str | None] = mapped_column(Text)
+
     role: Mapped[str] = mapped_column(String(16), nullable=False, default="customer")
     staff_restaurant_id: Mapped[str | None] = mapped_column(
         ForeignKey("restaurants.id", ondelete="SET NULL")
@@ -99,7 +105,7 @@ class Restaurant(Base):
     sort_order: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    items: Mapped[list["MenuItem"]] = relationship(back_populates="restaurant", lazy="selectin")
+    items: Mapped[list[MenuItem]] = relationship(back_populates="restaurant", lazy="selectin")
 
 
 class MenuItem(Base):
@@ -122,14 +128,15 @@ class MenuItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     restaurant: Mapped[Restaurant] = relationship(back_populates="items", lazy="selectin")
-    option_groups: Mapped[list["MenuOptionGroup"]] = relationship(
+    option_groups: Mapped[list[MenuOptionGroup]] = relationship(
         back_populates="item", cascade="all, delete-orphan", lazy="selectin"
     )
 
     __table_args__ = (
         CheckConstraint("base_price > 0", name="menu_items_price_positive"),
         CheckConstraint(
-            "category IN ('Starters','BBQ','Karahi & Curries','Biryani & Rice','Breads','Sides','Desserts','Drinks')",
+            "category IN ('Starters','BBQ','Karahi & Curries','Biryani & Rice',"
+            "'Breads','Sides','Desserts','Drinks')",
             name="menu_items_category_valid",
         ),
         Index(
@@ -161,7 +168,7 @@ class MenuOptionGroup(Base):
     sort_order: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
 
     item: Mapped[MenuItem] = relationship(back_populates="option_groups")
-    options: Mapped[list["MenuOption"]] = relationship(
+    options: Mapped[list[MenuOption]] = relationship(
         back_populates="group", cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -191,15 +198,12 @@ class Cart(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
-    restaurant_id: Mapped[str | None] = mapped_column(
-        ForeignKey("restaurants.id"), nullable=True
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    lines: Mapped[list["CartLine"]] = relationship(
+    lines: Mapped[list[CartLine]] = relationship(
         back_populates="cart", cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -228,7 +232,7 @@ class CartLine(Base):
 
     cart: Mapped[Cart] = relationship(back_populates="lines")
     item: Mapped[MenuItem] = relationship(lazy="selectin")
-    options: Mapped[list["CartLineOption"]] = relationship(
+    options: Mapped[list[CartLineOption]] = relationship(
         back_populates="line", cascade="all, delete-orphan", lazy="selectin"
     )
 
@@ -272,12 +276,18 @@ class Order(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="confirmed")
     restaurant_id: Mapped[str | None] = mapped_column(ForeignKey("restaurants.id"))
     restaurant_name: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # A basket spanning three kitchens becomes three orders, because each
+    # kitchen cooks and dispatches on its own clock. This is what lets the
+    # customer still see them as one checkout.
+    order_group_id: Mapped[str | None] = mapped_column(UUIDPK, index=True)
     fulfilment: Mapped[str] = mapped_column(String(16), nullable=False, default="pickup")
     subtotal: Mapped[int] = mapped_column(Integer, nullable=False)
     tax: Mapped[int] = mapped_column(Integer, nullable=False)
     delivery_fee: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total: Mapped[int] = mapped_column(Integer, nullable=False)
     payment_method: Mapped[str] = mapped_column(String(24), nullable=False, default="on_delivery")
+    contact_phone: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    delivery_address: Mapped[str] = mapped_column(Text, nullable=False, default="")
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
     idempotency_key: Mapped[str | None] = mapped_column(Text, unique=True)
     confirmed_at: Mapped[datetime] = mapped_column(
@@ -286,16 +296,17 @@ class Order(Base):
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    lines: Mapped[list["OrderLine"]] = relationship(
+    lines: Mapped[list[OrderLine]] = relationship(
         back_populates="order", cascade="all, delete-orphan", lazy="selectin"
     )
-    events: Mapped[list["OrderEvent"]] = relationship(
+    events: Mapped[list[OrderEvent]] = relationship(
         back_populates="order", cascade="all, delete-orphan", lazy="selectin"
     )
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('confirmed','preparing','ready','out_for_delivery','completed','cancelled')",
+            "status IN ('confirmed','preparing','ready','out_for_delivery',"
+            "'completed','cancelled')",
             name="orders_status_valid",
         ),
         CheckConstraint("fulfilment IN ('pickup','delivery')", name="orders_fulfilment_valid"),
@@ -344,6 +355,38 @@ class OrderEvent(Base):
     )
 
 
+# -------------------------------------------------------------------- rating
+class OrderRating(Base):
+    """A customer's verdict on one completed order.
+
+    Anchored to an order rather than to a restaurant, which is what keeps the
+    score honest: only somebody who actually received food can leave one, and
+    the unique constraint stops them leaving it twice. The restaurant is
+    denormalised alongside so the average can be read without touching orders.
+    """
+
+    __tablename__ = "order_ratings"
+
+    id: Mapped[str] = mapped_column(UUIDPK, primary_key=True, default=_uuid)
+    order_id: Mapped[str] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    restaurant_id: Mapped[str] = mapped_column(
+        ForeignKey("restaurants.id", ondelete="CASCADE"), nullable=False
+    )
+    stars: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        CheckConstraint("stars BETWEEN 1 AND 5", name="order_ratings_stars_valid"),
+        # One order, one verdict.
+        UniqueConstraint("order_id", name="order_ratings_one_per_order"),
+        Index("order_ratings_restaurant", "restaurant_id", "created_at"),
+    )
+
+
 # --------------------------------------------------------------- conversation
 class Conversation(Base):
     __tablename__ = "conversations"
@@ -354,6 +397,11 @@ class Conversation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Serves the sidebar: a customer's threads, most recently used first.
+    __table_args__ = (
+        Index("conversations_user_recent", "user_id", text("updated_at DESC")),
     )
 
 

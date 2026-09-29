@@ -117,9 +117,7 @@ def extract(message: str) -> dict[str, list[dict[str, Any]]]:
         # Split "peanuts and shellfish" into separate facts.
         for part in re.split(r",| and ", raw):
             part = _clean(part).removeprefix("and ").strip()
-            if part and any(a in part.lower() for a in ALLERGENS):
-                add(facts, f"Allergic to {part}", kind="allergy")
-            elif part and len(part) < 24:
+            if (part and any(a in part.lower() for a in ALLERGENS)) or (part and len(part) < 24):
                 add(facts, f"Allergic to {part}", kind="allergy")
 
     for match in _DIET.finditer(message):

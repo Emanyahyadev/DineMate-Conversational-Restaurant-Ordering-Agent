@@ -22,10 +22,64 @@ dependencies = [
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "mypy>=1.14",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "ruff>=0.9",
+    # Stubs, so mypy checks our use of these rather than giving up on them.
+    "types-pyyaml>=6.0",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Beyond the defaults: bugbear for real bug shapes, SIM/UP for the rewrites
+# worth having, and BLE so a bare `except Exception` has to justify itself -
+# which several deliberately do, and say why.
+select = ["E", "F", "W", "I", "B", "SIM", "UP", "BLE", "C4", "RUF"]
+ignore = [
+    # The agent boundary genuinely catches everything: a provider can raise
+    # anything, and a turn must fail as a message rather than a traceback.
+    "BLE001",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's whole dependency system is expressed as call-valued defaults, so
+# B008 fires on every correctly written route. These are the calls it is right
+# to evaluate once at import.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Header",
+    "fastapi.Body",
+    "fastapi.Form",
+    "fastapi.Cookie",
+    "fastapi.File",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests are allowed to be blunt: long assertions, `events[0]` where the intent
+# is "there is exactly one and I want it to blow up otherwise", and dict() calls
+# that read as a table of cases.
+"tests/**" = ["E501", "RUF015", "RUF059", "E741", "SIM105", "C408"]
+# Alembic generates these; env.py's imports genuinely run after path setup.
+"migrations/**" = ["E501", "I001", "E402", "W291"]
+# Ad-hoc operator scripts, not shipped code.
+"scripts/**" = ["E501", "I001", "E702", "RUF005"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["app"]
+strict = true
+# Third-party packages that ship no stubs. Ignoring the import is honest;
+# silently treating them as Any everywhere is what strict mode is meant to stop.
+[[tool.mypy.overrides]]
+module = ["motor.*", "agents.*", "jose.*", "argon2.*"]
+ignore_missing_imports = true

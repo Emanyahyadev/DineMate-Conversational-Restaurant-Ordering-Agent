@@ -32,6 +32,7 @@ export default function Chat() {
     { role: "assistant", content: FALLBACK_GREETING },
   ]);
   const [conversations, setConversations] = useState<api.ConversationSummary[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [switching, setSwitching] = useState(false);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
@@ -41,6 +42,8 @@ export default function Chat() {
 
   const [cart, setCart] = useState<api.Cart | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [contact, setContact] = useState({ phone: "", address: "" });
+  const [deliveryFee, setDeliveryFee] = useState("");
   const [cartBusy, setCartBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
@@ -64,6 +67,8 @@ export default function Chat() {
       const r = await api.getCart();
       setCart(r.cart);
       setToken(r.confirmation_token);
+      setContact(r.contact);
+      setDeliveryFee(r.delivery_fee_display);
     } catch {
       /* signed out or offline: leave the panel as it was */
     }
@@ -93,6 +98,9 @@ export default function Chat() {
   }, []);
 
   useEffect(() => {
+    // Not a synchronous setState: each of these awaits its request first.
+    // The lint rule cannot see through the async boundary.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refreshCart();
     void refreshConversations();
     void loadGreeting();
@@ -131,14 +139,30 @@ export default function Chat() {
 
   const removeConversation = useCallback(
     async (id: string) => {
-      await api.deleteConversation(id).catch(() => undefined);
+      // Gone from the list immediately - a delete that appears to do nothing
+      // until a round trip finishes reads as a broken button. If the server
+      // refuses, the thread comes back and says why, rather than the failure
+      // being swallowed.
+      const before = conversations;
+      setHistoryError(null);
+      setConversations((current) => current.filter((c) => c.id !== id));
+
+      try {
+        await api.deleteConversation(id);
+      } catch (err) {
+        console.error("could not delete that conversation", err);
+        setConversations(before);
+        setHistoryError("We could not delete that chat. Please try again.");
+        return;
+      }
+
       if (id === conversationId) {
         setConversationId(null);
         await loadGreeting(null);
       }
       await refreshConversations();
     },
-    [conversationId, loadGreeting, refreshConversations],
+    [conversations, conversationId, loadGreeting, refreshConversations],
   );
 
   useEffect(() => {
@@ -244,36 +268,54 @@ export default function Chat() {
     [conversationId, pending, refreshCart, refreshConversations],
   );
 
-  const mutateCart = useCallback(
-    async (fn: () => Promise<{ cart: api.Cart }>) => {
-      setCartBusy(true);
-      try {
-        setCart((await fn()).cart);
-        // Any mutation invalidates the outstanding confirmation (US-15).
-        setToken(null);
-        await refreshCart();
-      } catch (err) {
-        console.error("cart update failed", err);
-      } finally {
-        setCartBusy(false);
-      }
-    },
-    [refreshCart],
-  );
+  const mutateCart = useCallback(async (fn: () => Promise<{ cart: api.Cart }>) => {
+    setCartBusy(true);
+    try {
+      // The mutation answers with the whole cart, and nothing else on this
+      // panel changes: the saved contact details and the delivery fee are the
+      // same as they were. Re-reading /api/cart afterwards was a second round
+      // trip with every stepper button held disabled for its duration, which
+      // is what made tapping "+" twice feel broken.
+      setCart((await fn()).cart);
+      // Any mutation invalidates the outstanding confirmation (US-15).
+      setToken(null);
+    } catch (err) {
+      console.error("cart update failed", err);
+      // Whatever the server actually has now, rather than a guess.
+      await refreshCart();
+    } finally {
+      setCartBusy(false);
+    }
+  }, [refreshCart]);
 
-  const placeOrder = useCallback(async () => {
+  const placeOrder = useCallback(async (checkout: api.Checkout) => {
     if (!token) return;
     setCartBusy(true);
     setConfirmError(null);
     try {
-      const { order } = await api.placeOrder(token);
+      const { orders } = await api.placeOrder(token, checkout);
       setConfirming(false);
       setCartOpen(false);
+
+      // A basket spanning kitchens becomes one order each. Name them all: a
+      // customer who sees one id will assume the rest did not go through.
+      const lines = orders.map(
+        (o) =>
+          `- ${o.restaurant_name}: ${o.id}, ${o.total_display}, about ${o.eta_minutes} minutes`,
+      );
+      const summary =
+        orders.length === 1
+          ? `All set, your order is ${orders[0].id} from ${orders[0].restaurant_name}, ${orders[0].total_display}. About ${orders[0].eta_minutes} minutes.`
+          : [
+              `All set. That is ${orders.length} orders, one per kitchen:`,
+              ...lines,
+            ].join("\n");
+
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: `All set, your order is ${order.id} and the total is ${order.total_display}. It should be about ${order.eta_minutes} minutes. You can cancel within 10 minutes.`,
+          content: `${summary}\n\nYou can cancel any of them within 10 minutes.`,
         },
       ]);
       await refreshCart();
@@ -324,6 +366,7 @@ export default function Chat() {
             onNew={() => void startNewChat()}
             onOpen={(id) => void openConversation(id)}
             onDelete={(id) => void removeConversation(id)}
+            error={historyError}
             fill
           />
         </aside>
@@ -421,6 +464,7 @@ export default function Chat() {
               onNew={() => void startNewChat()}
               onOpen={(id) => void openConversation(id)}
               onDelete={(id) => void removeConversation(id)}
+              error={historyError}
             />
           </div>
           <div className="shrink-0 overflow-hidden rounded-2xl border border-line bg-surface">
@@ -494,6 +538,7 @@ export default function Chat() {
                     void openConversation(id);
                   }}
                   onDelete={(id) => void removeConversation(id)}
+                  error={historyError}
                 />
                 <div className="border-t border-line">{cartPanel}</div>
               </div>
@@ -507,9 +552,12 @@ export default function Chat() {
       {confirming && cart && (
         <ConfirmDialog
           cart={cart}
+          savedPhone={contact.phone}
+          savedAddress={contact.address}
+          deliveryFeeDisplay={deliveryFee}
           busy={cartBusy}
           error={confirmError}
-          onConfirm={() => void placeOrder()}
+          onConfirm={(checkout) => void placeOrder(checkout)}
           onCancel={() => setConfirming(false)}
         />
       )}

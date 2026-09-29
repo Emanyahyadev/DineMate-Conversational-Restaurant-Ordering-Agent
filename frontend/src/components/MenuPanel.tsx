@@ -12,11 +12,12 @@ import {
   GrainsSlashIcon,
   LeafIcon,
   PlantIcon,
+  StarIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react/dist/ssr";
 import type { Icon } from "@phosphor-icons/react";
 
-import { fetchMenu, listRestaurants, type MenuItem, type Restaurant } from "@/lib/api";
+import { fetchMenuBoard, type MenuBoard, type MenuItem, type Restaurant } from "@/lib/api";
 
 const CATEGORY_ICON: Record<string, Icon> = {
   starters: ForkKnifeIcon,
@@ -49,6 +50,16 @@ const HIDDEN_TAGS = new Set(["halal"]);
 
 type Status = "loading" | "ready" | "error";
 
+/**
+ * The last board, kept for the life of the page.
+ *
+ * On a phone the menu is a drawer that opens and closes all evening, and this
+ * component unmounts every time it closes. Without this, each open refetched
+ * the whole menu and showed a skeleton for the length of a round trip; with it,
+ * every open after the first is instant and the refresh happens behind it.
+ */
+let cached: MenuBoard | null = null;
+
 function groupByCategory(items: MenuItem[]): [string, MenuItem[]][] {
   const groups = new Map<string, MenuItem[]>();
   for (const item of items) {
@@ -65,24 +76,27 @@ export default function MenuPanel({
   /** Called with the dish name when a customer taps it. */
   onPick: (itemName: string) => void;
 }) {
-  const [items, setItems] = useState<MenuItem[]>([]);
-  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
-  const [active, setActive] = useState<string | null>(null);
-  const [status, setStatus] = useState<Status>("loading");
+  const [items, setItems] = useState<MenuItem[]>(cached?.items ?? []);
+  const [restaurants, setRestaurants] = useState<Restaurant[]>(cached?.restaurants ?? []);
+  const [active, setActive] = useState<string | null>(cached?.restaurants[0]?.id ?? null);
+  const [status, setStatus] = useState<Status>(cached ? "ready" : "loading");
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [menu, rest] = await Promise.all([fetchMenu(), listRestaurants()]);
+        const board = await fetchMenuBoard();
         if (cancelled) return;
-        setItems(menu);
-        setRestaurants(rest.items);
-        setActive((current) => current ?? rest.items[0]?.id ?? null);
+        cached = board;
+        setItems(board.items);
+        setRestaurants(board.restaurants);
+        setActive((current) => current ?? board.restaurants[0]?.id ?? null);
         setStatus("ready");
       } catch {
-        if (!cancelled) setStatus("error");
+        // A failed refresh behind an already-shown menu is not worth wiping
+        // the menu for; only a cold open has nothing to fall back on.
+        if (!cancelled && !cached) setStatus("error");
       }
     })();
     return () => {
@@ -134,8 +148,25 @@ export default function MenuPanel({
             ))}
           </div>
           {current && (
-            <p className="mt-1.5 px-1 text-[12px] leading-snug text-ink-muted">
-              {current.cuisine} &middot; {current.item_count} dishes
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 px-1 text-[12px] leading-snug text-ink-muted">
+              <span>
+                {current.cuisine} &middot; {current.item_count} dishes
+              </span>
+              {/* Only shown once somebody has actually rated a completed order
+                  here. An unrated kitchen is unknown, not bad, so it says
+                  nothing rather than showing a zero. */}
+              {current.rating?.average != null && (
+                <>
+                  <span aria-hidden>&middot;</span>
+                  <span className="inline-flex items-center gap-1 text-ink-soft">
+                    <StarIcon size={11} weight="fill" className="text-amber-500" />
+                    <span className="tabular-nums font-medium">
+                      {current.rating.average.toFixed(1)}
+                    </span>
+                    <span>({current.rating.count})</span>
+                  </span>
+                </>
+              )}
             </p>
           )}
         </div>
