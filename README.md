@@ -269,8 +269,8 @@ erDiagram
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/restaurant-ordering-agent.git
-cd restaurant-ordering-agent
+git clone https://github.com/Emanyahyadev/DineMate-Conversational-Restaurant-Ordering-Agent.git
+cd DineMate-Conversational-Restaurant-Ordering-Agent
 
 # Start local PostgreSQL and MongoDB databases
 docker compose up -d
